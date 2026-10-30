@@ -39,6 +39,9 @@ struct LoweredProgram {
     /// The constant buffer the surface stores read their descriptors from, when it differs from
     /// the textures' one (a program may address both a texture and a surface table).
     u32 required_surface_buffer = ~0U;
+    // UR28 and up seen without a mirror: lowering again with this many registers below R216
+    // reserved for them (even, so pairs stay adjacent) maps them.
+    u32 high_uniform_registers{};
     u32 error_offset{};
     std::string_view error;
 
@@ -48,9 +51,11 @@ struct LoweredProgram {
 // Lower only operations whose semantics are representable by the existing
 // Maxwell frontend. These are new instructions, not reinterpretations of the
 // native bytes. Scheduling/control words are added by the environment adapter.
-inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code, bool geometry_stage = false,
-                                     bool support_cooperative_matrix = false) {
+inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, bool geometry_stage,
+                                         bool support_cooperative_matrix, u32 high_uniforms) {
     LoweredProgram result;
+    // UR28 and up (when used) live just below R216: UR28 at R(216 - high_uniforms).
+    const u32 high_uniform_base = 216 - high_uniforms;
     struct Relocation { u32 output_index; s64 target; };
     std::vector<Relocation> relocations;
     std::vector<u32> barrier_tokens;
@@ -118,15 +123,17 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code, bool geo
         for (u32 bit : {16U, 24U, 32U, 64U}) {
             if (bit == 32 && insn.Bits(9, 3) != 1 && opcode != 0xb60 && opcode != 0xb66 && opcode != 0xf60) continue;
             const u32 reg = insn.Bits(bit, 8);
-            if (reg >= (uses_uniform_bank ? 216U : 246U) && reg < 255) return fail(index, "native program uses lowering scratch registers");
+            if (reg >= (uses_uniform_bank ? high_uniform_base : 246U) && reg < 255) return fail(index, "native program uses lowering scratch registers");
         }
         // UR0-UR21 live in R216-R237 and UR22-UR27 in R240-R245 (R239 holds the uniform
-        // predicates), so even/odd pairs stay adjacent. Sites that still check reg < 16 rely on
-        // UR0-UR15 being R216-R231.
+        // predicates), so even/odd pairs stay adjacent; UR28 and up below R216. Sites that
+        // still check reg < 16 rely on UR0-UR15 being R216-R231.
         const auto uniform_register = [&](u32 reg) -> u32 {
             if (reg < 22) return 216 + reg;
             if (reg < 28) return 218 + reg;
             if (reg == 63) return 255;
+            if (reg < 63 && reg - 28 < high_uniforms) return high_uniform_base + (reg - 28);
+            if (reg < 63) result.high_uniform_registers = (std::max)(result.high_uniform_registers, (reg - 26) & ~1U);
             return ~0U;
         };
         bool rewritten_uniform = false;
@@ -1139,7 +1146,7 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
         case 0x59f: {
             const u32 binding = insn.Bits(54, 5), offset = insn.Bits(40, 14);
             const u32 coordinate = insn.Bits(24, 8), data = insn.Bits(32, 8);
-            const u32 first_reserved = uses_uniform_bank ? 216U : 246U;
+            const u32 first_reserved = uses_uniform_bank ? high_uniform_base : 246U;
             if (insn.words[2] != 0x0010e000 || insn.Bits(61, 3) != 3 ||
                 insn.Bits(59, 2) || binding >= 18 || offset > 0x1fff ||
                 coordinate >= first_reserved - 1 || (data >= first_reserved && data != 255))
@@ -1351,7 +1358,7 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
                 const u32 hmma_mode = insn.words[2] & ~0xffU;
                 const u32 depth = hmma_mode == 0 ? 8U : 16U;
                 const u32 a_count = depth / 4, b_count = depth / 8;
-                const u32 limit = uses_uniform_bank ? 216U : 246U;
+                const u32 limit = uses_uniform_bank ? high_uniform_base : 246U;
                 if (native_predicate != 7 || (hmma_mode != 0 && hmma_mode != 0x800) ||
                     (insn.words[1] & ~0xffU) || (insn.words[3] & 0xc00001ffU) ||
                     dest % 2 || dest + 2 > limit || a % a_count || a + a_count > limit ||
@@ -1407,7 +1414,7 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
             }
             if (insn.Bits(12, 4) != 7)
                 return fail(index, "native matrix multiply requires unconditional participation");
-            const u32 register_limit = uses_uniform_bank ? 216U : 246U;
+            const u32 register_limit = uses_uniform_bank ? high_uniform_base : 246U;
             if ((insn.words[3] & 0xc00001ffU) || dest % 2 || a % 4 || b % 2 ||
                 (c != 255 && c % 2) || dest + 2 > register_limit ||
                 a + 4 > register_limit || b + 2 > register_limit ||
@@ -1745,7 +1752,7 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
             if ((insn.words[2] & ~0xffU) == 0x059e8700U) {
                 const u32 binding = insn.Bits(54, 5), offset = insn.Bits(40, 14);
                 const u32 a = insn.Bits(24, 8), b = insn.Bits(32, 8);
-                const u32 high = insn.Bits(64, 8), limit = uses_uniform_bank ? 216U : 246U;
+                const u32 high = insn.Bits(64, 8), limit = uses_uniform_bank ? high_uniform_base : 246U;
                 if (insn.Bits(59, 5) != 6 || binding >= 18 || offset > 0x1fff ||
                     a + 1 >= limit || b >= limit || (dest != 255 && dest >= limit) ||
                     (high != 255 && high >= limit) ||
@@ -1950,7 +1957,7 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
             const u32 binding = insn.Bits(54, 5);
             const u32 offset_mode = insn.Bits(76, 2);
             const bool per_tap = offset_mode == 2;
-            const u32 register_limit = uses_uniform_bank ? 216U : 246U;
+            const u32 register_limit = uses_uniform_bank ? high_uniform_base : 246U;
             if (insn.Bits(61, 3) != 1 || (offset_mode != 0 && !per_tap) || (bindless && per_tap) ||
                 insn.Bits(78, 3) || insn.Bits(81, 3) != 7 || insn.Bits(59, 1) || insn.Bits(89, 1) ||
                 mask == 0 ||
@@ -2094,7 +2101,7 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
                 return fail(index, "native uniform bindless texture handle provenance");
             const u32 components = static_cast<u32>(std::popcount(mask));
             const auto valid_span = [](u32 reg, u32 count) {
-                return reg == 255 || (count != 0 && reg + count <= 216 &&
+                return reg == 255 || (count != 0 && reg + count <= high_uniform_base &&
                                       (count == 1 || !(reg & 1)));
             };
             if (!valid_span(static_cast<u32>(dest), std::min(components, 2U)) ||
@@ -2109,7 +2116,7 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
             // Maxwell TEX.B wants the handle in Rb and the LOD right after it, hence R246/R247.
             const u32 lod = insn.Bits(87, 3);
             const bool has_lod = lod >= 2;
-            if (has_lod && source_a != 255 && ((source_a & 1) || source_a + 2 > 216))
+            if (has_lod && source_a != 255 && ((source_a & 1) || source_a + 2 > high_uniform_base))
                 return fail(index, "native uniform bindless texture lod operands");
             copy(250, source_a);
             copy(251, has_lod ? (source_a == 255 ? 255U : source_a + 1) : source_b);
@@ -2186,7 +2193,7 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
                     if (i < in_a) return source_a == 255 ? 255U : source_a + i;
                     return source_b == 255 ? 255U : source_b + (i - in_a);
                 };
-                const u32 limit = uses_uniform_bank ? 216U : 246U;
+                const u32 limit = uses_uniform_bank ? high_uniform_base : 246U;
                 const u32 components = static_cast<u32>(std::popcount(mask));
                 const u32 low_count = insn.Bits(79, 1) ? (split ? 1U : (components + 1) / 2) :
                                       split ? std::min(components, 2U) : components;
@@ -2373,7 +2380,7 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
             if (components == 0 || (store && insn.Bits(16, 8)) ||
                 (!store && (data || value == 255)) || (offset & (components * 4 - 1)) || offset > 0x7fffff ||
                 (value != 255 && ((value & (components - 1)) ||
-                 value + components > (uses_uniform_bank ? 216U : 246U))) ||
+                 value + components > (uses_uniform_bank ? high_uniform_base : 246U))) ||
                 (mode != 0x00100000U && (store || mode != 0x00300000U)))
                 return fail(index, "native local spill mode");
             if (value == 255) {
@@ -3240,6 +3247,18 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
         if (guarded_uniform) restore_predicate(guard_mask);
     }
     return fail(static_cast<u32>(code.size()), main_exited ? "native program lacks captured library return" : "native program has no unconditional EXIT");
+}
+
+inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code, bool geometry_stage = false,
+                                     bool support_cooperative_matrix = false) {
+    // Programs using uniform registers above UR27 are lowered again with mirrors for them.
+    u32 high_uniforms = 0;
+    for (;;) {
+        LoweredProgram lowered =
+            LowerToMaxwellWith(code, geometry_stage, support_cooperative_matrix, high_uniforms);
+        if (lowered || lowered.high_uniform_registers <= high_uniforms) return lowered;
+        high_uniforms = lowered.high_uniform_registers;
+    }
 }
 
 } // namespace Shader::Ampere
