@@ -1480,6 +1480,14 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
             const u32 special = insn.Bits(72, 8);
             if ((special == 17 || special == 29) && !geometry_stage)
                 return fail(index, "native geometry identity outside geometry stage");
+            if (special == 132 && !insn.words[1] && insn.words[2] == (special << 8)) {
+                // SR_VARIABLE_RATE: without variable-rate shading every fragment is 1x1, its width
+                // and height in bytes 1 and 2 (Nintendo Switch Sports Resort multiplies them).
+                const u32 target = opcode == 0x9c3 ? uniform_register(static_cast<u32>(dest)) : static_cast<u32>(dest);
+                if (target == ~0U) return fail(index, "native uniform special destination");
+                mov_imm(target, 0x00010100);
+                break;
+            }
             if (insn.words[1] || insn.words[2] != (special << 8) ||
                 (special != 0 && (special < 17 || special > 19) && (special < 29 || special > 35) &&
                  special != 37 && special != 38 && special != 39 &&
