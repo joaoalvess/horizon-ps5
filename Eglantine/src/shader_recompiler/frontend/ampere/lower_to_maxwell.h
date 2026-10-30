@@ -2171,9 +2171,13 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
                     return false;
                 const u32 coordinates = coordinate_count[dimension];
                 const bool has_lod = lod == 2 || lod == 3 || lod == 6 || lod == 7;
+                // 0x361's handle is one more value after the coordinates: 2D.DC is (x, y | handle,
+                // reference), ARRAY_2D is (layer, x | y, handle); with five or more values the
+                // coordinates keep Ra (CUBE.LL is (x, y, z | handle, LOD)).
                 const u32 count = coordinates + u32{native_bindless} + (has_lod ? 1 : 0) +
                                   (offsets ? 1 : 0) + (depth_compare ? 1 : 0);
-                const u32 in_a = insn.Bits(60, 1) ? (count <= 4 ? (count + 1) / 2 : 4) : coordinates;
+                const u32 in_a = insn.Bits(60, 1) ? (count <= 4 ? (count + 1) / 2 : native_bindless ? coordinates : 4)
+                                                  : coordinates;
                 const auto value = [&](u32 i) -> u32 {
                     if (i < in_a) return source_a == 255 ? 255U : source_a + i;
                     return source_b == 255 ? 255U : source_b + (i - in_a);
