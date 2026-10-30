@@ -44,14 +44,13 @@ TEST_CASE("Ampere reciprocal accepts the captured uniform source form", "[video_
     REQUIRE_FALSE(static_cast<bool>(LowerToMaxwell(alias)));
 }
 
-TEST_CASE("Ampere clip-state operations remain explicitly unsupported", "[video_core][ampere]") {
+TEST_CASE("Ampere CSMTEST lowers as a false test", "[video_core][ampere]") {
     const std::array<Instruction, 2> code{{
         {{0x0000780d, 0xc4321111, 0x03fe0000, 0x000fc800}},
         {{0x0000794d, 0, 0x03800000, 0}},
     }};
     const auto lowered = LowerToMaxwell(code);
-    REQUIRE_FALSE(static_cast<bool>(lowered));
-    REQUIRE(lowered.instructions.empty());
+    REQUIRE(static_cast<bool>(lowered));
 }
 
 TEST_CASE("Ampere floating comparisons accept uniform sources without losing FTZ",
