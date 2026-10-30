@@ -1087,16 +1087,14 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
                 (u64{offset >> 2} << 30));
             break;
         }
-        case 0x38c: { // ATOMS.ADD, MIN, MAX, AND, OR, INC, DEC.U32 (the operation at 87-90,
-                      // numbered as Maxwell's), naturally aligned shared byte offset.
-            const u32 offset = insn.Bits(40, 24);
-            const u32 operation = insn.Bits(87, 4);
-            if ((insn.words[2] & ~0x07800000U) || (offset & 3) || operation > 8 ||
-                operation == 3 || operation == 4)
+        case 0x38c: { // ATOMS (ADD/MIN/MAX/INC/DEC/AND/OR/XOR/EXCH, U32 or S32), aligned byte offset.
+            // The operation (bits 87-90) is numbered as in Maxwell ATOMS (52-55); bit 73 is S32.
+            const u32 offset = insn.Bits(40, 24), operation = insn.Bits(87, 4);
+            if ((insn.words[2] & ~0x07800200U) || operation > 8 || (offset & 3))
                 return fail(index, "native shared atomic mode");
             emit(0xec00000000000000ULL | predicate | dest |
                 (u64{insn.Bits(24, 8)} << 8) | (u64{insn.Bits(32, 8)} << 20) |
-                (u64{offset >> 2} << 30) | (u64{operation} << 52));
+                (u64{insn.Bits(73, 1)} << 28) | (u64{offset >> 2} << 30) | (u64{operation} << 52));
             break;
         }
         case 0x3a8: { // ATOMG.E.ADD.STRONG.GPU U32 at a 64-bit register address plus an offset.
