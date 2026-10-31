@@ -24,6 +24,7 @@
 #include <optional>
 #include <memory>
 #include <mutex>
+#include <utility>
 #include <vector>
 
 #include "common/alignment.h"
@@ -54,6 +55,7 @@
 #include "core/hle/kernel/k_readable_event.h"
 #include "core/hle/kernel/k_session.h"
 #include "core/hle/kernel/k_transfer_memory.h"
+#include "core/hle/kernel/svc_results.h"
 #include "core/memory.h"
 #include "video_core/host1x/host1x.h"
 #include "video_core/host1x/nx2_video_decoder.h"
@@ -479,9 +481,11 @@ private:
                              static_cast<u32>(second), static_cast<u32>(second >> 32)});
     }
 
+    // An empty partition is min = ~0, max = 0 (min > max). Fire Emblem: Fortune's Weave's SDK
+    // reads (0, 0) as a one-byte partition at address 0 and aborts in nn::gpu::sdk.
     void GetGsvPartition(HLERequestContext& ctx) {
         LOG_WARNING(Service, "(STUBBED) nx2:gpu TIPC 202 [2]={:#x}, empty", ctx.CommandBuffer()[2]);
-        TipcReplyWords(ctx, {0, 0, 0, 0});
+        TipcReplyWords(ctx, {~0U, ~0U, 0, 0});
     }
 
     void OpenSubSession(HLERequestContext& ctx) {
