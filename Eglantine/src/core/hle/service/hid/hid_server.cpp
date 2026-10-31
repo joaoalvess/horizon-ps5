@@ -134,6 +134,7 @@ IHidServer::IHidServer(Core::System& system_, std::shared_ptr<ResourceManager> r
         {212, C<&IHidServer::SendVibrationValueInBool>, "SendVibrationValueInBool"},
         {213, &IHidServer::SendNx2VibrationValue, "SendNx2VibrationValue"},
         {214, C<&IHidServer::SendNx2VibrationValues>, "SendNx2VibrationValues (guessed)"},
+        {220, C<&IHidServer::Unknown220>, "Unknown220"},
         {300, C<&IHidServer::ActivateConsoleSixAxisSensor>, "ActivateConsoleSixAxisSensor"},
         {301, C<&IHidServer::StartConsoleSixAxisSensor>, "StartConsoleSixAxisSensor"},
         {302, C<&IHidServer::StopConsoleSixAxisSensor>, "StopConsoleSixAxisSensor"},
@@ -1089,6 +1090,12 @@ void IHidServer::SendNx2VibrationValue(HLERequestContext& ctx) {
 
 Result IHidServer::SendNx2VibrationValues() {
     LOG_DEBUG(Service_HID, "(STUBBED) called");
+    R_SUCCEED();
+}
+
+Result IHidServer::Unknown220(Out<u8> out) {
+    LOG_DEBUG(Service_HID, "(STUBBED) called");
+    *out = 0;
     R_SUCCEED();
 }
 
