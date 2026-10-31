@@ -83,8 +83,12 @@ void ServiceFrameworkBase::ReportUnimplementedFunction(HLERequestContext& ctx,
         static std::set<std::pair<std::string, u32>> reported;
         std::scoped_lock lk{reported_mutex};
         if (!reported.emplace(service_name, ctx.GetCommand()).second) {
-            IPC::ResponseBuilder rb{ctx, 2};
+            constexpr u32 ZeroedWords = 32;
+            IPC::ResponseBuilder rb{ctx, 2 + ZeroedWords};
             rb.Push(ResultSuccess);
+            for (u32 i = 0; i < ZeroedWords; ++i) {
+                rb.Push<u32>(0);
+            }
             return;
         }
     }
@@ -104,8 +108,15 @@ void ServiceFrameworkBase::ReportUnimplementedFunction(HLERequestContext& ctx,
     UNIMPLEMENTED_MSG("Unknown / unimplemented {}", fmt::to_string(buf));
     if (auto_stub) {
         LOG_WARNING(Service, "Using auto stub fallback (repeats of this command are not logged)");
-        IPC::ResponseBuilder rb{ctx, 2};
+        // Callers read the reply words they expect without checking how many were written, so an
+        // empty reply hands them the request's leftover words as data (an HDR output format, a
+        // refresh rate, a device id). Reply with zeroed words instead.
+        constexpr u32 ZeroedWords = 32;
+        IPC::ResponseBuilder rb{ctx, 2 + ZeroedWords};
         rb.Push(ResultSuccess);
+        for (u32 i = 0; i < ZeroedWords; ++i) {
+            rb.Push<u32>(0);
+        }
     }
 }
 
