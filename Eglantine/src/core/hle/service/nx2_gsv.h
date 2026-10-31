@@ -1731,8 +1731,11 @@ private:
     // anything above 1. With the empty auto stub reply it read the request's leftover words as
     // the format; Kirby Air Riders re-queries whenever its HDR status event fires and rebuilt its
     // window images every few frames, which showed black. Report SDR output.
+    // nn::vi2::QueryDisplayHdrStatus(display name): u64 output format, u16 peak luminance in
+    // nits. The sdk takes format 1 as SDR and 2 as HDR and fails the query on any other value.
+    // Report SDR output with a typical SDR panel's peak.
     void QueryDisplayHdrStatus(HLERequestContext& ctx) {
-        TipcReplyWords(ctx, {0, 0, 0});
+        TipcReplyWords(ctx, {1, 0, 400});
     }
 
     void ReturnOne(HLERequestContext& ctx) {
