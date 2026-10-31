@@ -1561,6 +1561,7 @@ private:
                    u32 flags) {
         u64 address{};
         Nx2ImageLayout layout{};
+        u32 image_format{};
         {
             std::scoped_lock lk{m_objects->mutex};
             const auto image = m_objects->images.find(image_id);
@@ -1573,6 +1574,7 @@ private:
             }
             address = memory->second.address;
             layout = Nx2CalculateImageLayout(image->second.preference.data());
+            image_format = image->second.preference[6];
         }
         const auto device = Nvidia::Devices::Nx2GpuMemoryRegistry::Get().DeviceAddressOf(address);
         if (!device) {
@@ -1610,7 +1612,9 @@ private:
             .block_height_log2 = layout.block_height_log2 >= 3
                                      ? std::make_optional(layout.block_height_log2 - 3)
                                      : std::nullopt,
-            .pixel_format = android::PixelFormat::Rgba8888,
+            // Preference word 6: 1 = RGBA8, 4 = RGB10A2.
+            .pixel_format = image_format == 4 ? android::PixelFormat::Rgba1010102
+                                              : android::PixelFormat::Rgba8888,
             .transform_flags = android::BufferTransformFlags::Unset,
             .crop_rect = crop,
             .blending = Tegra::BlendMode::Opaque,
