@@ -600,6 +600,10 @@ private:
     /// Bytes of images per device memory block, for the collector (refreshed every 60 frames).
     std::unordered_map<u64, u64> block_image_bytes;
     u64 block_image_bytes_frame{~0ULL};
+    /// Device memory of the images in each slot of sentenced_images (same index): deleted, but
+    /// counted in the driver's usage until the ring destroys them.
+    std::array<u64, TICKS_TO_DESTROY> sentenced_image_bytes{};
+    size_t sentenced_image_index = 0;
     DelayedDestructionRing<ImageView, TICKS_TO_DESTROY> sentenced_image_view;
     DelayedDestructionRing<Framebuffer, TICKS_TO_DESTROY> sentenced_framebuffers;
 
