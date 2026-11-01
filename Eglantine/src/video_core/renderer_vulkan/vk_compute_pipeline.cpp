@@ -188,6 +188,9 @@ ComputePipeline::ComputePipeline(const Device& device_, Scheduler& scheduler, vk
                 LOG_WARNING(Render_Vulkan, "NX2_PIPELINE_STATS compute hash={:016x}{}", shader_hash, line);
             }
         }
+        // Nothing reads the module once the pipeline exists; the driver keeps its SPIR-V while it
+        // lives.
+        spv_module.reset();
         std::scoped_lock lock{build_mutex};
         is_built = true;
         build_condvar.notify_one();
