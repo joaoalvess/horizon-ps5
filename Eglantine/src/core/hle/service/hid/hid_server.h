@@ -192,7 +192,7 @@ private:
     void SendNx2VibrationValue(HLERequestContext& ctx);
     // Switch 2 sends vibration every frame with 214 (pointer buffers of device handles and
     // values, like 206); Eden doesn't emulate vibration, so accept and drop it.
-    Result SendNx2VibrationValues();
+    void SendNx2VibrationValues(HLERequestContext& ctx);
     // 220 (16 bytes, aruid): replies one byte (meaning unknown); answer 0 instead of leaving it to
     // the message buffer's leftovers.
     Result Unknown220(Out<u8> out);
