@@ -120,6 +120,10 @@ struct CommandList final {
     u64 capture_submit_id{};
     u64 capture_enqueue_id{};
     const char* capture_origin{"untracked"};
+    /// The entries' words when they were submitted (NX2), each entry's at submitted_offsets[i]:
+    /// executed instead of the memory, which the game may already be refilling for a later frame.
+    std::vector<CommandHeader> submitted_words;
+    std::vector<u32> submitted_offsets;
 };
 
 namespace GpfifoCapture {
