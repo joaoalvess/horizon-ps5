@@ -53,6 +53,23 @@ public:
             scope.submit = [&gpu](std::function<void()>&& work) {
                 gpu.RunInOrder(std::move(work));
             };
+            scope.queued = true;
+        }
+        scope.commands->push_back(std::move(command));
+    }
+
+    template <typename GPU>
+    static void Map(GPU& gpu, std::function<void()>&& command) {
+        if (!current) {
+            gpu.MapInOrder(std::move(command));
+            return;
+        }
+        auto& scope = *current->root;
+        if (!scope.submit || scope.queued) {
+            scope.submit = [&gpu](std::function<void()>&& work) {
+                gpu.MapInOrder(std::move(work));
+            };
+            scope.queued = true;
         }
         scope.commands->push_back(std::move(command));
     }
@@ -113,6 +130,7 @@ private:
     Nx2GpuCommandScope* previous;
     Nx2GpuCommandScope* root;
     bool published{};
+    bool queued{};
     std::function<void(std::function<void()>&&)> submit;
     std::shared_ptr<std::vector<std::function<void()>>> commands;
     std::function<void()> batch;

@@ -230,6 +230,8 @@ struct GPU::Impl {
 
     bool IsMapPending(GPUVAddr gpu_addr, u64 size) const {
         return pending_maps.Overlaps(gpu_addr, size);
+    void MapInOrder(std::function<void()>&& func) {
+        gpu_thread.Run(std::move(func), is_async, true);
     }
 
     /// Notify rasterizer that any caches of the specified region should be flushed to Switch memory
@@ -620,6 +622,8 @@ std::function<void()> GPU::PendingMap(GPUVAddr gpu_addr, u64 size, std::function
 
 bool GPU::IsMapPending(GPUVAddr gpu_addr, u64 size) const {
     return impl->IsMapPending(gpu_addr, size);
+void GPU::MapInOrder(std::function<void()>&& func) {
+    impl->MapInOrder(std::move(func));
 }
 
 void GPU::InvalidateRegion(DAddr addr, u64 size, bool preserve_gpu_writes) {

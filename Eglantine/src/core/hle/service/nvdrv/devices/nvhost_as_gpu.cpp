@@ -236,7 +236,7 @@ void nvhost_as_gpu::Nx2Map(u64 gpu_address, u64 cpu_address, u64 size) {
                  device_pointer != nullptr && device_pointer == cpu_pointer);
     }
     nx2_gpu_views.Map(gpu_address, cpu_address, size);
-    Nx2GpuCommandScope::Run(
+    Nx2GpuCommandScope::Map(
         system.GPU(), system.GPU().PendingMap(
                           gpu_address, size, [gmmu = gmmu.get(), gpu_address, device_address, size] {
                               gmmu->Map(gpu_address, device_address, size,
@@ -315,7 +315,7 @@ void nvhost_as_gpu::Nx2Sparse(u64 gpu_address, u64 size, bool create) {
         return;
     }
     nx2_sparse_ranges[gpu_address] = {size, device_address};
-    Nx2GpuCommandScope::Run(
+    Nx2GpuCommandScope::Map(
         system.GPU(), system.GPU().PendingMap(
                           gpu_address, size, [gmmu = gmmu.get(), gpu_address, device_address, size] {
                               gmmu->Map(gpu_address, device_address, size,
@@ -372,7 +372,7 @@ void nvhost_as_gpu::Nx2Reserve(u64 gpu_address, u64 size) {
         LOG_ERROR(Service_NVDRV, "Switch 2 sparse reservation {:#x}+{:#x} outside its region",
                   gpu_address, size);
     }
-    Nx2GpuCommandScope::Run(
+    Nx2GpuCommandScope::Map(
         system.GPU(), system.GPU().PendingMap(
                           gpu_address, size, [gmmu = gmmu.get(), gpu_address, device_address, size] {
                               if (device_address) {

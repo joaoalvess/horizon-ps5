@@ -267,6 +267,9 @@ public:
 
     /// Whether a map over part of [gpu_addr, gpu_addr + size) is queued and not done yet.
     [[nodiscard]] bool IsMapPending(GPUVAddr gpu_addr, u64 size) const;
+    /// RunInOrder for GPU memory maps: also done before the GPU thread reads the command lists
+    /// submitted later (with the GPU split, on its front rather than its back).
+    void MapInOrder(std::function<void()>&& func);
 
     /// Notify rasterizer that any caches of the specified region should be invalidated
     void InvalidateRegion(DAddr addr, u64 size, bool preserve_gpu_writes = false);
