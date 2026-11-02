@@ -13,6 +13,7 @@ add_executable(tests
     common/host_command_queue.cpp
     common/host_memory.cpp
     common/host_memory_fallback.cpp
+    common/page_table.cpp
     common/param_package.cpp
     common/range_map.cpp
     common/ring_buffer.cpp
