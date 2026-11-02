@@ -7,6 +7,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstring>
 #include <span>
 
@@ -33,6 +34,7 @@ enum class SwkbdAppletVersion : u32_le {
     Version393227 = 0x6000B,   // 6.0.0 - 7.0.1
     Version524301 = 0x8000D,   // 8.0.0+
     Version1310736 = 0x140010, // 20.0.0 native
+    Version1441810 = 0x160012, // Switch 2 (Fire Emblem: Fortune's Weave): native 0x530-byte config
 };
 
 enum class SwkbdType : u32 {
