@@ -1698,12 +1698,14 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
             const bool word = (mode & ~0x1c100U) == 0x00203000;
             const bool extended_word =
                 word && (insn.Bits(78, 2) == 2 || (insn.Bits(78, 2) == 3 && !insn.Bits(80, 1)));
+            // Bit 62: |Rs| on the register form (Hyrule Warriors: F2I.FTZ.U16.NTZ R26, |R42|).
+            const bool absolute = opcode == 0x305 && !half && insn.Bits(62, 1);
             if ((!half && !small && !byte && !word) ||
                 ((byte || small || extended_word) &&
                  (insn.Bits(24, 8) || (insn.words[3] & 0xc00001ffU) ||
                   (opcode == 0xb05 && insn.Bits(62, 2) && !small) ||
                   insn.Bits(91, 1) != static_cast<u32>(opcode == 0xd05))) ||
-                (opcode != 0xb05 && (insn.words[1] & (half ? 0xefffff00U : 0xffffff00U))) ||
+                (opcode != 0xb05 && (insn.words[1] & (half ? 0xefffff00U : absolute ? 0xbfffff00U : 0xffffff00U))) ||
                 (opcode == 0xd05 && uniform_register(insn.Bits(32, 8)) == ~0U)) {
                 return fail(index, "native float-to-integer conversion mode");
             }
@@ -1717,6 +1719,7 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
                 extract_half({source, insn.Bits(60, 1) ? 3U : 2U, false, false}, 0, 252);
                 source = 252;
             }
+            if (absolute) source = materialize(0, source, 249, true, false);
             if (byte) {
                 emit(0x5800000000000000ULL | predicate | 250 | (u64{source} << 8) |
                      (u64{source} << 20) | (u64{7} << 39) | (u64{7} << 48));
@@ -2514,8 +2517,10 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
                 result.instructions.push_back(base(0x0100000000000000ULL) | (u64{15} << 12) |
                     (u64{insn.words[1]} << 20));
             } else if (opcode == 0xc02) {
-                if (insn.words[1] >= 16 || insn.words[2] != 0x08000f00) return fail(index, "native uniform move source");
-                emit(base(0x5c98000000000000ULL) | (u64{15} << 39) | (u64{insn.words[1] + 216} << 20));
+                // Any uniform register (Hyrule Warriors: MOV R18, UR17; MOV R105, UR42).
+                const u32 source = insn.words[1] < 64 ? uniform_register(insn.words[1]) : ~0U;
+                if (source == ~0U || insn.words[2] != 0x08000f00) return fail(index, "native uniform move source");
+                emit(base(0x5c98000000000000ULL) | (u64{15} << 39) | (u64{source} << 20));
             } else if (opcode == 0x202) {
                 if (insn.Bits(40, 24)) return fail(index, "native MOV register modifiers");
                 result.instructions.push_back(base(0x5c98000000000000ULL) | (u64{15} << 39) |
