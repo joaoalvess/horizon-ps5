@@ -1668,7 +1668,8 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
             break;
         case 0x305: case 0xb05: case 0xd05: { // F2I NTZ, register/constant-buffer/uniform source
             const u32 mode = insn.words[2] & ~(opcode == 0xd05 ? 0x08000000U : 0U);
-            const bool half = opcode == 0x305 && mode == 0x0010f000;
+            // F16 source: bit 72 signs the result as in the other forms, bits 60-61 pick H0/H1.
+            const bool half = opcode == 0x305 && (mode & ~0x100U) == 0x0010f000;
             const bool small = (mode & ~0xc000U) == 0x00212800;
             const bool byte = (mode & ~0x10100U) == 0x0020e000;
             const bool word = (mode & ~0x1c100U) == 0x00203000;
@@ -1679,7 +1680,7 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
                  (insn.Bits(24, 8) || (insn.words[3] & 0xc00001ffU) ||
                   (opcode == 0xb05 && insn.Bits(62, 2) && !small) ||
                   insn.Bits(91, 1) != static_cast<u32>(opcode == 0xd05))) ||
-                (opcode != 0xb05 && (insn.words[1] & 0xffffff00U)) ||
+                (opcode != 0xb05 && (insn.words[1] & (half ? 0xefffff00U : 0xffffff00U))) ||
                 (opcode == 0xd05 && uniform_register(insn.Bits(32, 8)) == ~0U)) {
                 return fail(index, "native float-to-integer conversion mode");
             }
@@ -1690,7 +1691,7 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
                                                        small && insn.Bits(63, 1))
                        : opcode == 0xd05 ? uniform_register(insn.Bits(32, 8)) : insn.Bits(32, 8);
             if (half) {
-                extract_half({source, 2, false, false}, 0, 252);
+                extract_half({source, insn.Bits(60, 1) ? 3U : 2U, false, false}, 0, 252);
                 source = 252;
             }
             if (byte) {
