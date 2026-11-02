@@ -2473,11 +2473,12 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
             const bool store = opcode == 0x387;
             const u32 data = insn.Bits(32, 8), offset = insn.Bits(40, 24);
             const u32 type = insn.Bits(73, 3);
-            const u32 components = type >= 4 && type <= 6 ? 1U << (type - 4) : 0U;
+            const u32 components = type < 4 ? 1U : type <= 6 ? 1U << (type - 4) : 0U;
+            const u32 alignment = type < 2 ? 1U : type < 4 ? 2U : components * 4;
             const u32 mode = insn.words[2] & ~(7U << 9);
             u32 value = store ? data : static_cast<u32>(dest);
             if (components == 0 || (store && insn.Bits(16, 8)) ||
-                (!store && (data || value == 255)) || (offset & (components * 4 - 1)) || offset > 0x7fffff ||
+                (!store && (data || value == 255)) || (offset & (alignment - 1)) || offset > 0x7fffff ||
                 (value != 255 && ((value & (components - 1)) ||
                  value + components > (uses_uniform_bank ? high_uniform_base : 246U))) ||
                 (mode != 0x00100000U && (store || mode != 0x00300000U)))
