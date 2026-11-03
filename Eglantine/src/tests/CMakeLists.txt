@@ -45,6 +45,7 @@ add_executable(tests
     video_core/nx2_command_sync.cpp
     video_core/nx2_command_ranges.cpp
     video_core/physical_alias.cpp
+    video_core/ampere_lowering.cpp
     video_core/ampere_returns.cpp
     video_core/ampere_f2i.cpp
     video_core/compute_storage_buffers.cpp
