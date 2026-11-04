@@ -479,6 +479,7 @@ IR::Program TranslateProgram(ObjectPool<IR::Inst>& inst_pool, ObjectPool<IR::Blo
 
     CollectInterpolationInfo(env, program);
     AddNVNStorageBuffers(program);
+    Optimization::LimitSampledTextureArrays(program, normalized_host_info);
     // EDEN_NX2_IR_STATS=1: the optimized IR's size, lane shuffles and FMAs of programs with many
     // shuffles (the Ampere matrix instructions' emulation), to compare their lowerings.
     if (static const bool ir_stats = [] {
