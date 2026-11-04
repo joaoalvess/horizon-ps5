@@ -5,7 +5,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <array>
 #include <cstring>
+#include <span>
 #include <vector>
 #include <boost/container/static_vector.hpp>
 
@@ -26,6 +28,7 @@
 #include "common/alignment.h"
 #include "core/hle/service/filesystem/filesystem.h"
 #include "core/hle/service/ipc_helpers.h"
+#include "core/hle/service/ns/font_merge.h"
 #include "core/hle/service/ns/platform_service_manager.h"
 
 namespace Service::NS {
@@ -42,6 +45,14 @@ constexpr u32 EXPECTED_RESULT{0x7f9a0218}; // What we expect the decrypted bfttf
 constexpr u32 EXPECTED_MAGIC{0x36f81a1e};  // What we expect the encrypted bfttf first 4 bytes to be
 constexpr u64 SHARED_FONT_MEM_SIZE{0x1100000};
 constexpr FontRegion EMPTY_REGION{0, 0};
+
+/// The controller button icons of the Switch's extension font that Switch 2 titles look up in the
+/// standard font: the face buttons, the shoulder buttons, the sticks, the directions and the
+/// plus and minus buttons.
+constexpr std::array<u32, 24> BUTTON_GLYPHS{
+    0xE0A0, 0xE0A1, 0xE0A2, 0xE0A3, 0xE0A4, 0xE0A5, 0xE0A6, 0xE0A7, 0xE0A8, 0xE0A9, 0xE0B3, 0xE0B4,
+    0xE0E0, 0xE0E1, 0xE0E2, 0xE0E3, 0xE0E4, 0xE0E5, 0xE0E6, 0xE0E7, 0xE0E8, 0xE0E9, 0xE0EF, 0xE0F0,
+};
 
 static void DecryptSharedFont(const std::span<u32 const> input, std::span<u8> output, std::size_t& offset) {
     ASSERT(offset + (input.size() * sizeof(u32)) < SHARED_FONT_MEM_SIZE && "Shared fonts exceeds 17mb!");
@@ -171,6 +182,33 @@ IPlatformServiceManager::IPlatformServiceManager(Core::System& system_, const ch
         impl->builtin_font_regions.push_back({u32(plain_offset), u32(plain.size())});
         DecryptSharedFont(font_data_u32, impl->shared_font, offset);
         impl->shared_font_regions.push_back(region);
+    }
+
+    // Switch 2 titles look the controller button icons up in the standard font. The firmware's has
+    // none of them (they are in the extension font), so the icons would draw as "?". The copy of the
+    // standard font that Switch 2 titles get is the firmware's with those glyphs added.
+    constexpr size_t standard_type = static_cast<size_t>(SharedFontType::JapanUSEuropeStandard);
+    constexpr size_t extension_type = static_cast<size_t>(SharedFontType::NintendoExtended);
+    auto& regions = impl->builtin_font_regions;
+    if (regions.size() == SHARED_FONTS.size()) {
+        const auto font_data = [&](const FontRegion& region) {
+            return std::span<const u8>{impl->builtin_font.data() + region.offset, region.size};
+        };
+        const std::vector<u8> standard = MergeGlyphs(font_data(regions[standard_type]),
+                                                     font_data(regions[extension_type]),
+                                                     BUTTON_GLYPHS);
+        if (!standard.empty()) {
+            std::vector<u8> fonts;
+            for (size_t type_index = 0; type_index < regions.size(); ++type_index) {
+                const auto data = type_index == standard_type ? std::span<const u8>{standard}
+                                                              : font_data(regions[type_index]);
+                const std::size_t plain_offset = Common::AlignUp(fonts.size(), 0x1000);
+                fonts.resize(plain_offset + data.size());
+                std::memcpy(fonts.data() + plain_offset, data.data(), data.size());
+                regions[type_index] = {u32(plain_offset), u32(data.size())};
+            }
+            impl->builtin_font = std::move(fonts);
+        }
     }
 }
 

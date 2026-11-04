@@ -26,6 +26,7 @@ add_executable(tests
     common/undefined_fix.cpp
     common/unique_function.cpp
     core/core_timing.cpp
+    core/font_merge.cpp
     core/address_space.cpp
     core/page_heap.cpp
     core/read_traps.cpp
