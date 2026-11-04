@@ -73,6 +73,7 @@
 #include "core/hle/service/nvdrv/nvdrv_interface.h"
 #include "core/hle/service/nx2_stub_interface.h"
 #include "core/hle/service/nx2_decoder_image.h"
+#include "core/hle/service/nx2_present_pacer.h"
 #include "core/hle/service/sm/sm.h"
 #include "core/hle/service/server_manager.h"
 #include "core/hle/service/service.h"
@@ -1512,7 +1513,7 @@ private:
     // The console flips one frame per 60 Hz vblank and keeps the rest queued, so a game can't
     // present faster than that. Every slot is reported free here: hold each present until the
     // next vblank instead (title 4 ran at up to 160 fps, its timing and audio with it).
-    std::chrono::steady_clock::time_point m_next_vblank{};
+    Nx2PresentPacer m_present_pacer;
     u32 m_swap_word{};
 
     // timing: present word 12, (swap interval << 16) | refresh rate. Fire Emblem: Fortune's Weave
@@ -1536,18 +1537,16 @@ private:
         const auto interval = std::chrono::nanoseconds{
             100'000'000'000LL * swap_interval / refresh_rate / Settings::SpeedLimit()};
         const auto now = std::chrono::steady_clock::now();
-        if (now > m_next_vblank + interval) {
-            // Running slower than the swap interval: show at once and don't bank the lost time.
-            m_next_vblank = now;
-        } else if (now < m_next_vblank) {
+        const auto pacing = m_present_pacer.Advance(now, interval);
+        if (now < pacing.deadline) {
             // Sleep this service thread in the guest kernel. It runs on guest core 3, and a host
             // sleep held that core for the whole wait: game threads scheduled there ran only
             // between presents (Fortune's Weave's loader read one RomFS block per frame).
-            const auto wait = std::chrono::duration_cast<std::chrono::nanoseconds>(m_next_vblank - now);
+            const auto wait =
+                std::chrono::duration_cast<std::chrono::nanoseconds>(pacing.deadline - now);
             static_cast<void>(Kernel::GetCurrentThread(kernel).Sleep(
                 kernel, kernel.HardwareTimer().GetTick() + wait.count() + 2));
         }
-        m_next_vblank += interval;
     }
 
     void WaitForFrame(u32 fence_id, u32 fence_value) {
