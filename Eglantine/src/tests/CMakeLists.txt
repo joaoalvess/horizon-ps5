@@ -5,6 +5,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 add_executable(tests
+    core/nx2_video_ready.cpp
     core/nx2_present_pacer.cpp
     video_core/framebuffer_clear_layers.cpp
     common/bit_field.cpp
