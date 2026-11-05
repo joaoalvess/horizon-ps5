@@ -2179,7 +2179,7 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
             }
             break;
         }
-        case 0xb63: case 0xf63: { // TLD4 (gather), 2D, also with depth compare; component at bits 87-88.
+        case 0xb63: case 0xf63: { // TLD4 (gather), 2D, also with depth compare, or 2D array; component at bits 87-88.
             // 0xf63: the handle in a uniform register (bit 91), Maxwell TLD4.B with the handle in Rb.
             const bool bindless = opcode == 0xf63;
             const u32 handle = bindless ? uniform_register(insn.Bits(40, 6)) : 255;
@@ -2198,7 +2198,14 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
             if (dc && (bindless || offset_mode != 0 || f16_components != 0 || insn.Bits(87, 2) ||
                        source_a + 1 >= register_limit || source_b >= register_limit))
                 return fail(index, "native depth compare gather operands");
-            if (insn.Bits(61, 3) != 1 || offset_mode == 3 || (bindless && per_tap) ||
+            // Dimension 5: 2D array. As in Mesa NAK, Ra holds the coordinates (the array index
+            // first) and, with nothing else for Rb, the coordinate list splits across them: the
+            // index and x in Ra, Ra+1 and y in Rb. Maxwell TLD4 takes the same list.
+            const bool array = insn.Bits(61, 3) == 5;
+            if (array && (bindless || offset_mode != 0 || dc || f16_components != 0 ||
+                          source_a + 1 >= register_limit || source_b >= register_limit))
+                return fail(index, "native array gather operands");
+            if ((insn.Bits(61, 3) != 1 && !array) || offset_mode == 3 || (bindless && per_tap) ||
                 (texel_offset && (bindless || source_b == 255 || (source_a != 255 && source_a >= 245))) ||
                 (insn.Bits(78, 3) & ~1U) || insn.Bits(81, 3) != 7 || insn.Bits(59, 1) || insn.Bits(89, 1) ||
                 mask == 0 ||
@@ -2351,9 +2358,11 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
             if (!bindless) result.required_texture_buffer = binding;
             // Two coordinates: x in Ra, y in Rb (the coordinate list splits evenly across them);
             // with an offset, x and y in Ra, Ra+1 and the offset in Rb.
-            const u32 y = !(texel_offset || per_tap || dc) ? source_b : source_a == 255 ? 255U : source_a + 1;
+            const u32 y = !(texel_offset || per_tap || dc || array) ? source_b : source_a == 255 ? 255U : source_a + 1;
             emit(0x5c98000000000000ULL | predicate | 250 | (u64{15} << 39) | (u64{source_a} << 20));
             emit(0x5c98000000000000ULL | predicate | 251 | (u64{15} << 39) | (u64{y} << 20));
+            if (array)
+                emit(0x5c98000000000000ULL | predicate | 252 | (u64{15} << 39) | (u64{source_b} << 20));
             if (texel_offset) {
                 emit(0x5c98000000000000ULL | predicate | 246 | (u64{15} << 39) | (u64{source_b} << 20));
             }
@@ -2366,7 +2375,7 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
                      (u64{insn.Bits(90, 1)} << 49) | (u64{7} << 51));
             } else {
             emit(0xc800000000000000ULL | predicate | 250 | (u64{250} << 8) |
-                 (u64{per_tap ? 248U : texel_offset ? 246U : dc ? 252U : 255U} << 20) | (u64{2} << 28) | (u64{mask} << 31) |
+                 (u64{per_tap ? 248U : texel_offset ? 246U : dc ? 252U : 255U} << 20) | (u64{array ? 3U : 2U} << 28) | (u64{mask} << 31) |
                  (u64{insn.Bits(40, 14)} << 36) | (u64{insn.Bits(90, 1)} << 49) | (u64{dc} << 50) | (u64{7} << 51) |
                  (u64{offset_mode} << 54) | (u64{insn.Bits(87, 2)} << 56));
             }
