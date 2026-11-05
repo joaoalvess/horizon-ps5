@@ -2995,11 +2995,45 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
                 // predicate. The orderings are (a strictly-ordered b) OR (a == b AND low),
                 // through P6. The instruction's own input must be PT.
                 const u32 ex_compare = insn.Bits(76, 3);
-                if (ex_compare == 0 || ex_compare == 7 || insn.Bits(87, 4) != 7 ||
-                    insn.Bits(74, 2)) {
+                if (ex_compare == 0 || ex_compare == 7 || insn.Bits(74, 2) == 3) {
                     return fail(index, "native extended integer comparison");
                 }
                 const u32 ea = operand(0, false), eb = operand(1, false);
+                if (insn.Bits(87, 4) != 7 || insn.Bits(74, 2)) {
+                    const u32 destination = insn.Bits(81, 3);
+                    const u32 destination_b = insn.Bits(84, 3);
+                    const u32 low = insn.Bits(68, 4);
+                    const u32 accumulate = insn.Bits(87, 4);
+                    const u32 combine = insn.Bits(74, 2);
+                    u32 temporary = 0;
+                    while (temporary == destination || temporary == destination_b ||
+                           temporary == (low & 7) || temporary == (accumulate & 7) ||
+                           temporary == insn.Bits(12, 3))
+                        ++temporary;
+                    const u32 mask = 1U << temporary;
+                    emit(0x38e8000000070000ULL | 253 | (u64{255} << 8) | (u64{mask} << 20));
+                    const auto isetp = [&](u32 op, u32 input, u32 combine) {
+                        return 0x5b60000000000000ULL | predicate | 7 | (u64{temporary} << 3) |
+                               (u64{ea} << 8) | (u64{eb} << 20) | (u64{input & 7} << 39) |
+                               (u64{input >> 3} << 42) | (u64{combine} << 45) |
+                               (u64{insn.Bits(73, 1)} << 48) | (u64{op} << 49);
+                    };
+                    constexpr u32 And = 0, Or = 1, Lt = 1, Eq = 2, Gt = 4, Ne = 5;
+                    if (ex_compare == Eq) {
+                        emit(isetp(Eq, low, And));
+                    } else if (ex_compare == Ne) {
+                        emit(isetp(Ne, low, Or));
+                    } else {
+                        emit(isetp(Eq, low, And));
+                        emit(isetp(ex_compare <= 3 ? Lt : Gt, temporary, Or));
+                    }
+                    emit(0x5090000000000000ULL | predicate | destination_b |
+                         (u64{destination} << 3) | (u64{temporary} << 12) | (u64{7} << 29) |
+                         (u64{accumulate & 7} << 39) | (u64{accumulate >> 3} << 42) |
+                         (u64{combine} << 45));
+                    emit(0x38f0000000070000ULL | (u64{253} << 8) | (u64{mask} << 20));
+                    break;
+                }
                 const u64 sign = u64{insn.Bits(73, 1)} << 48;
                 const u64 low = (u64{insn.Bits(68, 3)} << 39) | (u64{insn.Bits(71, 1)} << 42);
                 const u64 outs = insn.Bits(84, 3) | (u64{insn.Bits(81, 3)} << 3);
