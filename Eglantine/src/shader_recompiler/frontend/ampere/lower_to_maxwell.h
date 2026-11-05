@@ -3370,10 +3370,9 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
                 const bool carry_in = insn.Bits(74, 1) != 0;
                 const u32 carry_out = insn.Bits(81, 3);
                 const u32 a = insn.Bits(24, 8);
+                // A uniform carry goes through P(6-n) and R239 bit 6-n, so any UPn works.
                 if ((carry_in && carry_out != 7) || (opcode == 0x210 && (insn.words[1] & ~(0xffU | 0x80000000U))) ||
-                    (opcode == 0xa10 && !valid_cbuf()) ||
-                    (rewritten_uniform && carry_out != 7 && carry_out > 1) ||
-                    (rewritten_uniform && carry_in && insn.Bits(87, 3) > 1 && insn.Bits(87, 3) != 7))
+                    (opcode == 0xa10 && !valid_cbuf()))
                     return fail(index, "native integer carry mode");
                 if (opcode == 0x810) {
                     emit(0x1c00000000000000ULL | predicate | 250 | (u64{a} << 8) | (u64{insn.words[1]} << 20));
