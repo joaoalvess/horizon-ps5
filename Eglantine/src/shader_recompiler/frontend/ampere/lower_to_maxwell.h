@@ -64,7 +64,7 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, bool
         // RED's uniform-address form must reserve the UR mirrors even when no other op uses URs.
         const bool uniform_red = op == 0x98e && instruction.Bits(24, 8) == 255 &&
                                  (instruction.words[2] & ~0x03800e3fU) == 0x0c10e100;
-        uses_uniform_bank |= op == 0xd08 || op == 0x499 || uniform_red;
+        uses_uniform_bank |= op == 0xd08 || op == 0x499 || op == 0x4a4 || uniform_red;
         uses_uniform_bank |= op == 0x3c4 || op == 0x2bd || op == 0x896 || op == 0xf63 || op == 0xf66 || op == 0xf69 || op == 0xc0b || op == 0xc0c || op == 0x986 || op == 0x9a8 || op == 0xc12 || op == 0xc17 || op == 0xe24 || op == 0xc24 || op == 0xd00 || op == 0xd09 || op == 0x9c3 || op == 0xc45 || op == 0x2a4 || op == 0x891 || op == 0x890 || op == 0x290 || op == 0x28c || op == 0x88c || op == 0x287 || op == 0x887 || op == 0x958 || op == 0xab9 || op == 0xabb || op == 0x899 || op == 0xc20 || op == 0xe21 || op == 0xe23 || op == 0xc02 ||
                              op == 0x886 || op == 0x3c2 || op == 0xc82 || op == 0x882 || op == 0x292 || op == 0x092 || op == 0x892 || op == 0x291 || op == 0x981 || op == 0xc13 || op == 0xc10 || op == 0xc11 || op == 0xc23 || op == 0x526 || op == 0x2be || op == 0x8a4 || op == 0xd05 || (op == 0x984 && instruction.Bits(91, 1)) || (op == 0x988 && instruction.Bits(91, 1)) || op == 0x89c || op == 0x883 || op == 0x2a5 || op == 0xd06 || op == 0x8a5 || op == 0x299 || op == 0xc09 || op == 0xf60 || (op == 0x81c && instruction.Bits(67, 1)) || op == 0xc0a;
     }
@@ -177,7 +177,7 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, bool
         bool uniform_guard = false;
         bool checked_guard = false;
         u32 uniform_output = 7; // ULOP3's UPn output: computed in P(6-n), then merged into R239
-        if (opcode == 0x2a4 || opcode == 0x8a4 || opcode == 0x891 || opcode == 0x890 || opcode == 0x290 ||
+        if (opcode == 0x2a4 || opcode == 0x4a4 || opcode == 0x8a4 || opcode == 0x891 || opcode == 0x890 || opcode == 0x290 ||
             opcode == 0x292 || opcode == 0x092 || opcode == 0x892 || opcode == 0x291 || opcode == 0x896 || opcode == 0x8a5) {
             // A UPn guard is swapped into P(6-n) around the op; lowerings that would clobber the
             // saved predicate or write outside scratch unguarded are rejected after emission.
@@ -205,7 +205,7 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, bool
                 uniform_output = insn.Bits(81, 3);
                 insn.words[2] = (insn.words[2] & ~(7U << 17)) | ((6 - uniform_output) << 17);
             }
-            opcode = opcode == 0x2a4 ? 0x224 : opcode == 0x8a4 ? 0x824 : opcode == 0x891 ? 0x811 : opcode == 0x890 ? 0x810
+            opcode = opcode == 0x2a4 ? 0x224 : opcode == 0x4a4 ? 0x424 : opcode == 0x8a4 ? 0x824 : opcode == 0x891 ? 0x811 : opcode == 0x890 ? 0x810
                    : opcode == 0x292 || opcode == 0x092 ? 0x212 : opcode == 0x892 ? 0x812 : opcode == 0x291 ? 0x211
                    : opcode == 0x896 ? 0x816 : opcode == 0x8a5 ? 0x825 : 0x210;
         }
@@ -1764,6 +1764,14 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
                 return fail(index, "native fragment discard mode");
             emit(0xe33000000000000fULL | predicate);
             break;
+        case 0x243: // F2IP.U8.F32 with RZ for the second source: one unsigned byte, as F2I.U8
+            if (insn.Bits(24, 8) != 255 || (insn.words[1] & ~0xffU) ||
+                insn.words[2] != 0x0000c4ffU)
+                return fail(index, "native packed float-to-byte mode");
+            insn.words[0] &= 0x00ffffffU;
+            insn.words[2] = 0x0021e000U;
+            opcode = 0x305;
+            [[fallthrough]];
         case 0x305: case 0xb05: case 0xd05: { // F2I NTZ, register/constant-buffer/uniform source
             const u32 mode = insn.words[2] & ~(opcode == 0xd05 ? 0x08000000U : 0U);
             // F16 source: bit 72 signs the result as in the other forms, bits 60-61 pick H0/H1.
@@ -1775,12 +1783,14 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
                 word && (insn.Bits(78, 2) == 2 || (insn.Bits(78, 2) == 3 && !insn.Bits(80, 1)));
             // Bit 62: |Rs| on the register form (Hyrule Warriors: F2I.FTZ.U16.NTZ R26, |R42|).
             const bool absolute = opcode == 0x305 && !half && insn.Bits(62, 1);
+            const bool negate = opcode == 0x305 && !half && insn.Bits(63, 1);
             if ((!half && !small && !byte && !word) ||
                 ((byte || small || extended_word) &&
                  (insn.Bits(24, 8) || (insn.words[3] & 0xc00001ffU) ||
                   (opcode == 0xb05 && insn.Bits(62, 2) && !small) ||
                   insn.Bits(91, 1) != static_cast<u32>(opcode == 0xd05))) ||
-                (opcode != 0xb05 && (insn.words[1] & (half ? 0xefffff00U : absolute ? 0xbfffff00U : 0xffffff00U))) ||
+                (opcode != 0xb05 && (insn.words[1] & ~(half ? 0x100000ffU :
+                    0xffU | (absolute ? 0x40000000U : 0U) | (negate ? 0x80000000U : 0U)))) ||
                 (opcode == 0xd05 && uniform_register(insn.Bits(32, 8)) == ~0U)) {
                 return fail(index, "native float-to-integer conversion mode");
             }
@@ -1793,7 +1803,7 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
                 extract_half({source, insn.Bits(60, 1) ? 3U : 2U, false, false}, 0, 252);
                 source = 252;
             }
-            if (absolute) source = materialize(0, source, 249, true, false);
+            if (absolute || negate) source = materialize(0, source, 249, absolute, negate);
             if (byte) {
                 emit(0x5800000000000000ULL | predicate | 250 | (u64{source} << 8) |
                      (u64{source} << 20) | (u64{7} << 39) | (u64{7} << 48));
@@ -3119,6 +3129,13 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
         }
         case 0x819: { // SHF.HI, immediate shift
             const bool is_signed = insn.Bits(73, 2) == 2;
+            if (!insn.Bits(80, 1) && insn.Bits(76, 1) && insn.Bits(73, 2) == 1 &&
+                !insn.Bits(75, 1) && insn.words[1] <= 32) {
+                emit(base(0x38f8000000000000ULL) | (u64{insn.Bits(24, 8)} << 8) |
+                     (u64{insn.words[1]} << 20) | (u64{2} << 37) |
+                     (u64{insn.Bits(64, 8)} << 39));
+                break;
+            }
             if (!insn.Bits(80, 1) && !insn.Bits(76, 1) && insn.Bits(64, 8) == 255 &&
                 insn.Bits(73, 2) == 3 && !insn.Bits(75, 1) && insn.words[1] <= 32) {
                 emit(base(0x3848000000000000ULL) | (u64{insn.Bits(24, 8)} << 8) | (u64{insn.words[1]} << 20));

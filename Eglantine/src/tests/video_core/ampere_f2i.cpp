@@ -162,7 +162,7 @@ TEST_CASE("Ampere ceiling F2I rejects non-NTZ, other widths and unknown modifier
         REQUIRE_FALSE(static_cast<bool>(LowerToMaxwell(invalid)));
     }
     auto invalid = code;
-    invalid[0].words[1] = 0x80000002;
+    invalid[0].words[1] = 0x20000002;
     REQUIRE_FALSE(static_cast<bool>(LowerToMaxwell(invalid)));
     invalid = code;
     invalid[0].words[3] |= 1;
