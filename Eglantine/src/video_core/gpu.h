@@ -261,6 +261,13 @@ public:
     /// Runs func on the GPU thread after the command lists submitted so far.
     void RunInOrder(std::function<void()>&& func);
 
+    /// [gpu_addr, gpu_addr + size) is the range of GPU addresses the map changes.
+    [[nodiscard]] std::function<void()> PendingMap(GPUVAddr gpu_addr, u64 size,
+                                                   std::function<void()>&& func);
+
+    /// Whether a map over part of [gpu_addr, gpu_addr + size) is queued and not done yet.
+    [[nodiscard]] bool IsMapPending(GPUVAddr gpu_addr, u64 size) const;
+
     /// Notify rasterizer that any caches of the specified region should be invalidated
     void InvalidateRegion(DAddr addr, u64 size, bool preserve_gpu_writes = false);
 

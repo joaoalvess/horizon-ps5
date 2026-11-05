@@ -36,6 +36,7 @@
 #include "video_core/engines/maxwell_dma.h"
 #include "video_core/gpu.h"
 #include "video_core/gpu_split.h"
+#include "video_core/pending_maps.h"
 #include "video_core/gpu_thread.h"
 #include "video_core/host1x/host1x.h"
 #include "video_core/host1x/syncpoint_manager.h"
@@ -219,6 +220,18 @@ struct GPU::Impl {
         gpu_thread.Run(std::move(func), is_async);
     }
 
+    std::function<void()> PendingMap(GPUVAddr gpu_addr, u64 size, std::function<void()>&& func) {
+        const u64 id = pending_maps.Add(gpu_addr, size);
+        return [this, id, func = std::move(func)] {
+            func();
+            pending_maps.Remove(id);
+        };
+    }
+
+    bool IsMapPending(GPUVAddr gpu_addr, u64 size) const {
+        return pending_maps.Overlaps(gpu_addr, size);
+    }
+
     /// Notify rasterizer that any caches of the specified region should be flushed to Switch memory
     void FlushRegion(DAddr addr, u64 size) {
         gpu_thread.FlushRegion(addr, size, is_async);
@@ -382,6 +395,8 @@ struct GPU::Impl {
     std::list<std::function<void()>> sync_requests;
     std::atomic<u64> current_sync_fence{};
     u64 last_sync_fence{};
+
+    VideoCommon::PendingMaps pending_maps;
     std::mutex sync_request_mutex;
     std::condition_variable sync_request_cv;
 
@@ -597,6 +612,14 @@ void GPU::FlushRegion(DAddr addr, u64 size) {
 
 void GPU::RunInOrder(std::function<void()>&& func) {
     impl->RunInOrder(std::move(func));
+}
+
+std::function<void()> GPU::PendingMap(GPUVAddr gpu_addr, u64 size, std::function<void()>&& func) {
+    return impl->PendingMap(gpu_addr, size, std::move(func));
+}
+
+bool GPU::IsMapPending(GPUVAddr gpu_addr, u64 size) const {
+    return impl->IsMapPending(gpu_addr, size);
 }
 
 void GPU::InvalidateRegion(DAddr addr, u64 size, bool preserve_gpu_writes) {

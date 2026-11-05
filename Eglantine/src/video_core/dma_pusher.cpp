@@ -520,6 +520,8 @@ bool DmaPusher::Step() {
                                (command_list.snapshot_suspensions & 1) == 0 &&
                                command_list.snapshot_suspensions ==
                                    suspensions.load(std::memory_order_acquire) &&
+                               !std::ranges::binary_search(command_list.deferred_entries,
+                                                           static_cast<u32>(dma_pushbuffer_subindex)) &&
                                !IsGpuWrittenCommands(dma_state.dma_get,
                                                      size_t{header.size} * sizeof(u32)) &&
                                !(use_safe && memory_manager.IsMemoryDirty(dma_state.dma_get,
@@ -946,15 +948,40 @@ void DmaPusher::CallMultiMethod(const u32* base_start, u32 num_methods) {
 
 void DmaPusher::RefreshSnapshot(CommandList& list, u64 now) {
     list.snapshot_suspensions = now;
+    std::vector<u32> deferred;
     for (size_t i = 0; i < list.command_lists.size() && i < list.submitted_offsets.size(); ++i) {
         const CommandListHeader& entry = list.command_lists[i];
         const u32 offset = list.submitted_offsets[i];
         if (offset + entry.size > list.submitted_words.size()) {
             continue;
         }
+        if (system.GPU().IsMapPending(entry.addr, static_cast<u64>(entry.size) * sizeof(u32))) {
+            deferred.push_back(static_cast<u32>(i));
+            continue;
+        }
         memory_manager.ReadBlockUnsafe(entry.addr, list.submitted_words.data() + offset,
                                        entry.size * sizeof(u32));
     }
+    list.deferred_entries = std::move(deferred);
+}
+
+void DmaPusher::RefreshDeferredEntries(CommandList& list) {
+    std::erase_if(list.deferred_entries, [&](u32 i) {
+        if (i >= list.command_lists.size() || i >= list.submitted_offsets.size()) {
+            return true;
+        }
+        const CommandListHeader& entry = list.command_lists[i];
+        const u32 offset = list.submitted_offsets[i];
+        if (offset + entry.size > list.submitted_words.size()) {
+            return true;
+        }
+        if (system.GPU().IsMapPending(entry.addr, static_cast<u64>(entry.size) * sizeof(u32))) {
+            return false;
+        }
+        memory_manager.ReadBlockUnsafe(entry.addr, list.submitted_words.data() + offset,
+                                       entry.size * sizeof(u32));
+        return true;
+    });
 }
 
 bool DmaPusher::IsGpuWrittenCommands(GPUVAddr address, size_t size) {
