@@ -179,6 +179,8 @@ private:
     template <typename FuncMapped, typename FuncReserved, typename FuncUnmapped>
     inline void MemoryOperation(GPUVAddr gpu_src_addr, std::size_t size, bool is_big_page, FuncMapped&& func_mapped, FuncReserved&& func_reserved, FuncUnmapped&& func_unmapped) const;
 
+    size_t MaxContinuousRangeUncached(GPUVAddr gpu_addr, size_t size) const;
+
     void ReadBlockImpl(GPUVAddr gpu_src_addr, void* dest_buffer, std::size_t size, VideoCommon::CacheType which, bool unsafe) const;
     void WriteBlockImpl(GPUVAddr gpu_dest_addr, const void* src_buffer, std::size_t size, VideoCommon::CacheType which, bool unsafe);
 
@@ -243,6 +245,8 @@ private:
 
     bool native_tiling{};
     mutable std::mutex guard;
+    /// Bumped after each page table change; MaxContinuousRange answers are kept until then.
+    std::atomic<u64> map_serial{1};
 
     static constexpr size_t continuous_bits = 64;
 
