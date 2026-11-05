@@ -64,11 +64,19 @@ TEST_CASE("Ampere uniform population count uses uniform registers and rejects un
     INFO(lowered.error);
     REQUIRE(lowered);
     REQUIRE(lowered.instructions[0] == (0x5c08000000070000ULL | 218 | (u64{219} << 20)));
+    const auto high_destination =
+        LowerToMaxwell(std::array{Instruction{{0x001072bf, 3, 0x08000000, 0}}, Exit});
+    REQUIRE(high_destination);
+    REQUIRE(high_destination.instructions[0] == (0x5c08000000070000ULL | 232 | (u64{219} << 20)));
+    const auto high_source =
+        LowerToMaxwell(std::array{Instruction{{0x000272bf, 16, 0x08000000, 0}}, Exit});
+    REQUIRE(high_source);
+    REQUIRE(high_source.instructions[0] == (0x5c08000000070000ULL | 218 | (u64{232} << 20)));
     for (const Instruction invalid : std::array{
-             Instruction{{0x001072bf, 3, 0x08000000, 0}},
-             Instruction{{0x000272bf, 16, 0x08000000, 0}},
              Instruction{{0x000262bf, 3, 0x08000000, 0}},
-             Instruction{{0x000272bf, 3, 0, 0}}}) {
+             Instruction{{0x000272bf, 3, 0, 0}},
+             Instruction{{0x003f72bf, 3, 0x08000000, 0}},
+             Instruction{{0x000272bf, 64, 0x08000000, 0}}}) {
         REQUIRE_FALSE(LowerToMaxwell(std::array{invalid, Exit}));
     }
 }
