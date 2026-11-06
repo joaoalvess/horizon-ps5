@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <string>
 #include <string_view>
@@ -15,6 +16,7 @@
 
 #include "shader_recompiler/exception.h"
 #include "video_core/renderer_vulkan/pipeline_helper.h"
+#include "video_core/renderer_vulkan/nir_handoff.h"
 #include "video_core/renderer_vulkan/pipeline_statistics.h"
 #include "video_core/renderer_vulkan/vk_buffer_cache.h"
 #include "video_core/renderer_vulkan/vk_compute_pipeline.h"
@@ -131,7 +133,19 @@ ComputePipeline::ComputePipeline(const Device& device_, Scheduler& scheduler, vk
             .basePipelineIndex = 0,
         };
         try {
+            const auto create_start = std::chrono::steady_clock::now();
             pipeline = device.GetLogical().CreateComputePipeline(compute_ci, *pipeline_cache);
+            // A module that carried NIR (nir_handoff.h): the driver compiled its own copy.
+            if (const auto detach = NirHandoff::detach.load(std::memory_order_acquire)) {
+                detach(reinterpret_cast<void*>(*spv_module));
+            }
+            if (static const bool compile_times = std::getenv("EDEN_NX2_COMPILE_TIMES") != nullptr;
+                compile_times) {
+                LOG_WARNING(Render_Vulkan, "NX2_COMPILE_TIME hash={:016x} driver_us={}", shader_hash,
+                            std::chrono::duration_cast<std::chrono::microseconds>(
+                                std::chrono::steady_clock::now() - create_start)
+                                .count());
+            }
         } catch (const vk::Exception& exception) {
             LOG_CRITICAL(Render_Vulkan, "Adreno rejected compute shader {:016X}: {}", shader_hash,
                          exception.what());

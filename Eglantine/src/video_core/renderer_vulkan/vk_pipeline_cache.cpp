@@ -36,6 +36,8 @@
 #include "video_core/renderer_vulkan/fixed_pipeline_state.h"
 #include "video_core/renderer_vulkan/maxwell_to_vk.h"
 #include "video_core/renderer_vulkan/pipeline_helper.h"
+#include <array>
+#include "video_core/renderer_vulkan/nir_handoff.h"
 #include "video_core/renderer_vulkan/pipeline_statistics.h"
 #include "video_core/renderer_vulkan/vk_compute_pipeline.h"
 #include "video_core/renderer_vulkan/vk_descriptor_pool.h"
@@ -1497,7 +1499,9 @@ std::unique_ptr<ComputePipeline> PipelineCache::CreateComputePipeline(
         env.Dump(hash, key.unique_hash);
     }
 
+    const auto translate_start = std::chrono::steady_clock::now();
     auto program{TranslateProgram(pools.inst, pools.block, env, cfg, host_info)};
+    const auto translate_end = std::chrono::steady_clock::now();
     const VkDriverIdKHR driver_id = device.GetDriverID();
     const bool needs_shared_mem_clamp =
         driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY ||
@@ -1511,7 +1515,46 @@ std::unique_ptr<ComputePipeline> PipelineCache::CreateComputePipeline(
                     max_shared_memory / 1024);
         program.shared_memory_size = max_shared_memory;
     }
+    // Compute programs go to the driver as NIR, without SPIR-V, where the platform can hand NIR
+    // over (nir_handoff.h); a program the NIR backend does not translate keeps SPIR-V.
+    // EDEN_NX2_NIR=0 keeps SPIR-V for every program.
+    static const bool nir_requested = [] {
+        const char* value = std::getenv("EDEN_NX2_NIR");
+        return value == nullptr || value[0] != '0';
+    }();
+    if (const auto attach = NirHandoff::attach.load(std::memory_order_acquire); nir_requested && attach &&
+                                                                   device.IsExtSubgroupSizeControlSupported()) {
+        // The NIR replaces the module's code, which only has to be a SPIR-V header.
+        static constexpr std::array<u32, 5> placeholder{0x07230203U, 0x00010000U, 0U, 1U, 0U};
+        vk::ShaderModule nir_module{BuildShader(device, placeholder)};
+        if (attach(profile, program, reinterpret_cast<void*>(*nir_module))) {
+            if (static const bool compile_times = std::getenv("EDEN_NX2_COMPILE_TIMES") != nullptr;
+                compile_times) {
+                LOG_WARNING(Render_Vulkan, "NX2_COMPILE_TIME hash={:016x} translate_us={} nir_us={}",
+                            key.unique_hash,
+                            std::chrono::duration_cast<std::chrono::microseconds>(translate_end - translate_start).count(),
+                            std::chrono::duration_cast<std::chrono::microseconds>(
+                                std::chrono::steady_clock::now() - translate_end)
+                                .count());
+            }
+            Common::ThreadWorker* const nir_worker{build_in_parallel ? &workers : nullptr};
+            return std::make_unique<ComputePipeline>(device, scheduler, vulkan_pipeline_cache, descriptor_pool,
+                                                     guest_descriptor_queue, descriptor_buffer_ring,
+                                                     nir_worker, statistics, &shader_notify, program.info,
+                                                     std::move(nir_module), key.unique_hash);
+        }
+    }
     const std::vector<u32> code{EmitSPIRV(profile, program)};
+    // EDEN_NX2_COMPILE_TIMES=1: where a compute shader's compile time goes (NX2_COMPILE_TIME lines;
+    // the driver part is logged by ComputePipeline when its build ends).
+    if (static const bool compile_times = std::getenv("EDEN_NX2_COMPILE_TIMES") != nullptr; compile_times) {
+        const auto emit_end = std::chrono::steady_clock::now();
+        LOG_WARNING(Render_Vulkan, "NX2_COMPILE_TIME hash={:016x} translate_us={} spirv_us={} spirv_words={}",
+                    key.unique_hash,
+                    std::chrono::duration_cast<std::chrono::microseconds>(translate_end - translate_start).count(),
+                    std::chrono::duration_cast<std::chrono::microseconds>(emit_end - translate_end).count(),
+                    code.size());
+    }
 
     // Text log + .spv dump. Done before pipeline build so a driver crash still leaves the module.
     {

@@ -7,12 +7,16 @@
 #include <algorithm>
 #include <array>
 #include <bitset>
+#include <map>
 #include <memory>
+#include <string>
+#include <string_view>
 #include <optional>
 #include <vector>
 #include <queue>
 
 #include <cstdlib>
+#include <fmt/format.h>
 #include "common/logging.h"
 #include "common/settings.h"
 #include "shader_recompiler/exception.h"
@@ -500,6 +504,18 @@ IR::Program TranslateProgram(ObjectPool<IR::Inst>& inst_pool, ObjectPool<IR::Blo
                     break;
                 }
             }
+        }
+        // EDEN_NX2_IR_OPCODES=1: every compute program's distinct opcodes (sizing a NIR backend).
+        if (program.stage == Stage::Compute && std::getenv("EDEN_NX2_IR_OPCODES") != nullptr) {
+            std::map<std::string_view, size_t> used;
+            for (IR::Block* const block : program.blocks) {
+                for (const IR::Inst& inst : block->Instructions()) {
+                    ++used[IR::NameOf(inst.GetOpcode())];
+                }
+            }
+            std::string list;
+            for (const auto& [name, count] : used) list += fmt::format(" {}:{}", name, count);
+            LOG_WARNING(Shader, "NX2_IR_OPCODES start={:#x} insts={}{}", env.StartAddress(), insts, list);
         }
         if (shuffles >= 16) {
             LOG_WARNING(Shader, "NX2_IR_STATS stage={} start={:#x} insts={} shuffles={} fma32={}",
