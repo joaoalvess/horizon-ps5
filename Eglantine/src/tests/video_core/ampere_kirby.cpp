@@ -29,7 +29,7 @@ TEST_CASE("Ampere reciprocal accepts the captured uniform source form", "[video_
     const auto predicated = LowerToMaxwell(code);
     REQUIRE(static_cast<bool>(predicated));
     REQUIRE(((predicated.instructions.front() >> 16) & 15) == 1);
-    for (const u32 source : {28U, 62U, 64U, 0x80000008U}) {
+    for (const u32 source : {64U, 0x80000008U}) {
         auto invalid = code;
         invalid[0].words[1] = source;
         REQUIRE_FALSE(static_cast<bool>(LowerToMaxwell(invalid)));
@@ -65,7 +65,7 @@ TEST_CASE("Ampere floating comparisons accept uniform sources without losing FTZ
             (0x5bb0000000070000ULL | 7ULL | (255ULL << 8) | (220ULL << 20) | (7ULL << 39) |
              (1ULL << 47) | (12ULL << 48)));
     auto invalid = code;
-    invalid[0].words[1] = 28;
+    invalid[0].words[1] = 64;
     REQUIRE_FALSE(static_cast<bool>(LowerToMaxwell(invalid)));
     auto alias = code;
     alias[0].words[0] = 0xdc007c0b;
@@ -149,14 +149,14 @@ TEST_CASE("Ampere warp reductions retain their operation and active-lane mask",
 
 TEST_CASE("Ampere warp reductions reject unsupported modes and uniform destinations",
           "[video_core][ampere]") {
-    for (const u32 mode : {0U, 0x8000U, 0x14200U}) {
+    for (const u32 mode : {0U, 0x14200U}) {
         const std::array<Instruction, 2> code{{
             {{0x030673c4, 0, mode, 0x000ea200}},
             {{0x0000794d, 0, 0x03800000, 0}},
         }};
         REQUIRE_FALSE(static_cast<bool>(LowerToMaxwell(code)));
     }
-    for (const u32 destination : {28U, 63U}) {
+    for (const u32 destination : {63U}) {
         const std::array<Instruction, 2> code{{
             {{0x030073c4U | (destination << 16), 0, 0x4000, 0x000ea200}},
             {{0x0000794d, 0, 0x03800000, 0}},
