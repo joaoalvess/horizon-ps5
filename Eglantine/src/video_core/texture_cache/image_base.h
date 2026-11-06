@@ -136,6 +136,13 @@ struct ImageBase {
     u64 modification_tick = 0;
     /// Newest modification tick of any image in aliased_images (TextureCache::NoteAliasTick).
     u64 alias_modification_tick = 0;
+    /// TextureCache::overlap_epoch when MarkModification last resolved this image's overlaps.
+    u64 overlap_resolved_epoch = 0;
+    /// Feedback copy coalescing (TextureCache::SynchronizeAliases): the bound colour target this
+    /// image was last copied from, and the guest texture barrier count and target set then.
+    ImageId feedback_source{};
+    u64 feedback_barrier_epoch = ~u64{0};
+    u64 feedback_rt_serial = ~u64{0};
     size_t lru_index = SIZE_MAX;
 
     std::array<u32, MAX_MIP_LEVELS> mip_level_offsets{};

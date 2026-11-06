@@ -26,6 +26,7 @@
 #include "video_core/memory_manager.h"
 #include "video_core/nx2_profile.h"
 #include "video_core/rasterizer_interface.h"
+#include "video_core/texture_barrier_epoch.h"
 #include "video_core/textures/texture.h"
 #ifdef ARCHITECTURE_x86_64
 #include "video_core/macro_turing_jit.h"
@@ -435,11 +436,14 @@ void Maxwell3D::ProcessMethodCall(u32 method, u32 argument, u32 nonshadow_argume
         upload_state.ProcessData(argument, is_last_call);
         return;
     case MAXWELL3D_REG_INDEX(fragment_barrier):
+        VideoCommon::NoteTextureBarrier();
         return rasterizer->FragmentBarrier();
     case MAXWELL3D_REG_INDEX(invalidate_texture_data_cache):
+        VideoCommon::NoteTextureBarrier();
         rasterizer->InvalidateGPUCache();
         return rasterizer->WaitForIdle();
     case MAXWELL3D_REG_INDEX(tiled_cache_barrier):
+        VideoCommon::NoteTextureBarrier();
         return rasterizer->TiledCacheBarrier();
     default:
         draw_manager.ProcessMethodCall(*this, method, argument);

@@ -640,6 +640,10 @@ private:
     Common::ScratchBuffer<u8> unswizzle_data_buffer;
 
     u64 modification_tick = 0;
+    /// Bumped whenever an overlap link is made (MarkModification's overlap walk).
+    u64 overlap_epoch = 1;
+    /// Graphics texture views are being prepared (feedback copy coalescing).
+    bool feedback_sampling = false;
     std::atomic<bool> partial_downloads_seen{false};
     std::vector<ImageId> partial_download_images;
     u64 frame_tick = 0;

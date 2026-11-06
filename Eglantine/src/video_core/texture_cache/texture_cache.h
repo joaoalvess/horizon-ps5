@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <limits>
 #include <map>
+#include <string_view>
 #include <vector>
 #include <optional>
 #include <bit>
@@ -19,6 +20,7 @@
 #include <boost/container/small_vector.hpp>
 
 #include "common/alignment.h"
+#include "common/scope_exit.h"
 #include "common/settings.h"
 #include "common/slot_vector.h"
 #include "video_core/control/channel_state.h"
@@ -35,6 +37,7 @@
 #include "video_core/texture_cache/util.h"
 #include "video_core/nx2.h"
 #include "video_core/nx2_profile.h"
+#include "video_core/texture_barrier_epoch.h"
 #include "video_core/cache_tracking_diagnostics.h"
 #include "video_core/textures/decoders.h"
 
@@ -513,6 +516,10 @@ void TextureCache<P>::MarkModification(ImageId id) {
 
 template <class P>
 void TextureCache<P>::FillImageViews(std::span<ImageViewInOut> views, bool compute, bool blacklist) {
+    feedback_sampling = !compute;
+    SCOPE_EXIT {
+        feedback_sampling = false;
+    };
     bool has_blacklisted = false;
     do {
         has_deleted_images = false;
@@ -3016,6 +3023,7 @@ ImageId TextureCache<P>::JoinImages(const ImageInfo& info, GPUVAddr gpu_addr, DA
         ImageBase& aliased = slot_images[aliased_id];
         aliased.overlapping_images.push_back(new_image_id);
         new_image.overlapping_images.push_back(aliased_id);
+        ++overlap_epoch;
         if (aliased.info.resources.levels == 1 && aliased.info.block.depth == 0 &&
             aliased.overlapping_images.size() > 1) {
             aliased.flags |= ImageFlagBits::BadOverlap;
@@ -4063,7 +4071,9 @@ void TextureCache<P>::MarkModification(ImageBase& image) {
     // This GPU write creates a newer owner. Complete older partial aliases first, while
     // their modification ordering and CPU backing are still unambiguous.
     if (!image.aliased_images.empty() || !image.overlapping_images.empty()) {
-        CompleteAllPartialDownloads();
+        if (!partial_download_images.empty()) {
+            CompleteAllPartialDownloads();
+        }
     } else {
         CompletePartialDownloads(image.cpu_addr, image.guest_size_bytes, &image);
     }
@@ -4076,8 +4086,14 @@ void TextureCache<P>::MarkModification(ImageBase& image) {
     for (const AliasedImage& alias : image.aliased_images) {
         ReplaceUnwrittenSparse(alias.id);
     }
-    for (const ImageId overlap_id : image.overlapping_images) {
-        ReplaceUnwrittenSparse(overlap_id);
+    // An overlap's sparse state only moves forward (unwritten, then replaced) and new overlaps bump
+    // overlap_epoch, so the walk is needed once per new overlap, not on every draw: Donkey Kong
+    // Bananza's main depth buffer has ~140 overlaps and thousands of draws a frame write it.
+    if (image.overlap_resolved_epoch != overlap_epoch) {
+        for (const ImageId overlap_id : image.overlapping_images) {
+            ReplaceUnwrittenSparse(overlap_id);
+        }
+        image.overlap_resolved_epoch = overlap_epoch;
     }
 }
 
@@ -4109,17 +4125,56 @@ void TextureCache<P>::SynchronizeAliases(ImageId image_id) {
         return;
     }
     boost::container::small_vector<const AliasedImage*, 8> aliased_images;
+    // A draw that samples an image whose newer alias is one of its own colour targets (a feedback
+    // read: the target's memory viewed at another size or format) copies that target at most once
+    // per guest texture barrier and render-target set. Without a barrier the guest's texture reads
+    // are not ordered after its colour writes, so a copy before every draw gives more than the
+    // hardware does, and it was a full-screen copy for every draw of Donkey Kong Bananza's
+    // G-buffer at Ingot Isle (~1,600 a frame, against ~60 barriers).
+    // EDEN_NX2_FEEDBACK_COPIES=exact restores a copy for every draw.
+    static const bool coalesce_feedback = [] {
+        const char* value = std::getenv("EDEN_NX2_FEEDBACK_COPIES");
+        return value == nullptr || std::string_view{value} != "exact";
+    }();
+    const u64 barrier_epoch = VideoCommon::texture_barrier_epoch.load(std::memory_order_relaxed);
+    // The draw's own colour targets, from its registers (render_targets may still be the last draw's).
+    const auto draw_color_target = [this](ImageId id) {
+        if (!maxwell3d) {
+            return false;
+        }
+        const GPUVAddr address = slot_images[id].gpu_addr;
+        const auto& regs = maxwell3d->regs;
+        for (u32 index = 0; index < regs.rt_control.count; ++index) {
+            if (regs.rt[index].Address() == address) {
+                return true;
+            }
+        }
+        return false;
+    };
+    ImageId feedback_copied{};
     bool any_rescaled = True(image.flags & ImageFlagBits::Rescaled);
     bool any_modified = True(image.flags & ImageFlagBits::GpuModified);
     u64 most_recent_tick = image.modification_tick;
     for (const AliasedImage& aliased : image.aliased_images) {
         ImageBase& aliased_image = slot_images[aliased.id];
         if (image.modification_tick < aliased_image.modification_tick) {
+            if (coalesce_feedback && feedback_sampling && draw_color_target(aliased.id)) {
+                if (image.feedback_source == aliased.id && image.feedback_rt_serial == render_targets_serial &&
+                    image.feedback_barrier_epoch == barrier_epoch) {
+                    continue;
+                }
+                feedback_copied = aliased.id;
+            }
             most_recent_tick = (std::max)(most_recent_tick, aliased_image.modification_tick);
             aliased_images.push_back(&aliased);
             any_rescaled |= True(aliased_image.flags & ImageFlagBits::Rescaled);
             any_modified |= True(aliased_image.flags & ImageFlagBits::GpuModified);
         }
+    }
+    if (feedback_copied) {
+        image.feedback_source = feedback_copied;
+        image.feedback_barrier_epoch = barrier_epoch;
+        image.feedback_rt_serial = render_targets_serial;
     }
     if (aliased_images.empty()) {
         return;
