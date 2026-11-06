@@ -10,6 +10,7 @@
 #include "video_core/dirty_flags.h"
 #include "video_core/engines/maxwell_3d.h"
 #include "video_core/rasterizer_interface.h"
+#include "video_core/macro.h"
 
 namespace Tegra::Engines {
 
@@ -307,6 +308,9 @@ void Maxwell3D::DrawManager::ProcessDraw(Maxwell3D& maxwell3d, bool draw_indexed
     LOG_TRACE(HW_GPU, "called, topology={}, count={}", draw_state.topology, draw_indexed ? draw_state.index_buffer.count : draw_state.vertex_buffer.count);
     UpdateTopology(maxwell3d);
     if (maxwell3d.ShouldExecute()) {
+        if (draw_indexed && maxwell3d.regs.IsShaderConfigEnabled(4)) {
+            maxwell3d.GetNativeMacroEngine().RecordBananzaTerrainDepthDraw(maxwell3d, instance_count);
+        }
         maxwell3d.rasterizer->Draw(draw_indexed, instance_count);
     }
 }
