@@ -2236,7 +2236,7 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
                 }))
                 return fail(index, "native uniform bindless texture handle provenance");
             const u32 components = static_cast<u32>(std::popcount(mask));
-            const auto valid_span = [](u32 reg, u32 count) {
+            const auto valid_span = [high_uniform_base](u32 reg, u32 count) {
                 return reg == 255 || (count != 0 && reg + count <= high_uniform_base &&
                                       (count == 1 || !(reg & 1)));
             };
