@@ -230,6 +230,8 @@ struct GPU::Impl {
 
     bool IsMapPending(GPUVAddr gpu_addr, u64 size) const {
         return pending_maps.Overlaps(gpu_addr, size);
+    }
+
     void MapInOrder(std::function<void()>&& func) {
         gpu_thread.Run(std::move(func), is_async, true);
     }
@@ -622,6 +624,8 @@ std::function<void()> GPU::PendingMap(GPUVAddr gpu_addr, u64 size, std::function
 
 bool GPU::IsMapPending(GPUVAddr gpu_addr, u64 size) const {
     return impl->IsMapPending(gpu_addr, size);
+}
+
 void GPU::MapInOrder(std::function<void()>&& func) {
     impl->MapInOrder(std::move(func));
 }
