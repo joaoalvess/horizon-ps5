@@ -100,7 +100,11 @@ python3 -B "$root/tools/check-startup-performance.py"
 python3 -B "$root/tools/check-worker-affinity.py"
 python3 -B "$root/tools/check-tsc-fallback.py"
 python3 -B "$root/tools/check-jit-protection.py"
-python3 -B "$root/tools/check-jit-allocator.py"
+if [[ ${EDEN_ROSETTA:-0} == 1 ]]; then
+    echo "== check-jit-allocator.py skipped: under Rosetta, code rewritten through an alias mapping keeps its stale translation"
+else
+    python3 -B "$root/tools/check-jit-allocator.py"
+fi
 python3 -B "$root/tools/check-jit-patch-lookup.py"
 python3 -B "$root/tools/check-jit-assert.py"
 python3 -B "$root/tools/check-crash-report.py"

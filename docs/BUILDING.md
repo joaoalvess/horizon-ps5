@@ -33,6 +33,27 @@ The first build takes a while (RADV and Eden are large). Later builds reuse ever
 already exists: the dependencies, this checkout's build cache in
 `~/.cache/ps5-eden-headless.<hash>`, and ccache.
 
+## On a Mac
+
+The build needs an x86-64 Linux host: the RADV isolation runs the host's GNU binutils on an
+x86-64 archive, the link takes the host clang's x86-64 builtins, and the checks after the link
+compile x86-64-only port code and run it. On Apple silicon it runs in an amd64 Ubuntu 24.04
+container under Rosetta (OrbStack or Docker Desktop with Rosetta enabled):
+
+```bash
+tools/docker/run.sh make JOBS=6 RADV_BUILD_JOBS=6
+```
+
+`tools/docker/run.sh` builds the image the first time (`tools/docker/Dockerfile`, from
+`tools/ci/setup-ubuntu-24.04.sh`), then runs the command with the folder that holds this checkout
+and its `../` dependencies mounted at the same path. `HOME`, and with it the build cache and
+ccache, is `HORIZON_BUILD_HOME`, by default `home-amd64` in that folder.
+
+Under Rosetta the script sets `EDEN_ROSETTA=1`, and the release checks at the end of
+`tools/build-headless-native.sh` leave out `tools/check-jit-allocator.py`, the one that cannot
+pass there: code rewritten through a second mapping of the same memory keeps its stale
+translation. It passes on an x86-64 host.
+
 ## Make targets
 
 | Target | What it does |
