@@ -71,7 +71,7 @@ if (YUZU_STATIC_ROOM)
 endif()
 
 # qt stuff
-option(ENABLE_QT "Enable the Qt frontend" ON)
+option(ENABLE_QT "Enable the Qt frontend" OFF)
 option(ENABLE_QT_TRANSLATION "Enable translations for the Qt frontend" OFF)
 option(ENABLE_UPDATE_CHECKER "Enable update checker (for Qt and Android)" OFF)
 set(EGLANTINE_UPDATE_REPO "Djihads80/Eglantine" CACHE STRING "GitHub repository (owner/name) whose releases the update checker and news feed read")
@@ -259,7 +259,7 @@ option(NIGHTLY_BUILD "Use Nightly qualifiers in the update checker and build met
 cmake_dependent_option(YUZU_ROOM "Enable dedicated room functionality" ON "NOT ANDROID" OFF)
 cmake_dependent_option(YUZU_ROOM_STANDALONE "Enable standalone room executable" ON "YUZU_ROOM" OFF)
 
-cmake_dependent_option(YUZU_CMD "Compile the eden-cli executable" ON "NOT ANDROID" OFF)
+cmake_dependent_option(YUZU_CMD "Compile the eden-cli executable" OFF "NOT ANDROID" OFF)
 
 cmake_dependent_option(YUZU_CRASH_DUMPS "Compile crash dump (Minidump) support" OFF "WIN32 OR LINUX" OFF)
 
