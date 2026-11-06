@@ -10,6 +10,7 @@
 // epilogue (reached by every invocation, see structured_control_flow.cpp) hands them to Vulkan.
 
 #include <algorithm>
+#include <cstdlib>
 #include <span>
 
 #include "shader_recompiler/backend/spirv/emit_spirv.h"
@@ -18,6 +19,14 @@
 
 namespace Shader::Backend::SPIRV {
 namespace {
+bool TaskCountStartsAtZero() {
+    static const bool zero = [] {
+        const char* const value = std::getenv("EDEN_NX2_TASK_COUNT_INIT");
+        return value == nullptr || value[0] != '0';
+    }();
+    return zero;
+}
+
 void Barrier(EmitContext& ctx) {
     ctx.OpControlBarrier(ctx.Const(static_cast<u32>(spv::Scope::Workgroup)),
                          ctx.Const(static_cast<u32>(spv::Scope::Workgroup)),
@@ -207,6 +216,11 @@ void EmitIsbeWriteMapU32(EmitContext& ctx, const IR::Value& address, Id value) {
 }
 
 void EmitMeshPrologue(EmitContext& ctx) {
+    if (ctx.stage == Stage::Task && TaskCountStartsAtZero()) {
+        ctx.OpStore(PayloadWord(ctx, ctx.Const(1U)), ctx.u32_zero_value);
+        Barrier(ctx);
+        return;
+    }
     if (ctx.stage != Stage::Mesh) {
         return;
     }
