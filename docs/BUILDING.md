@@ -62,7 +62,7 @@ translation. It passes on an x86-64 host.
 | `make package` | Only the app folder, `build/release/PPSA98515` |
 | `make install PS5_HOST=<address>` | Build the app, then copy `build/release/PPSA98515` to a console over FTP (only what changed is sent; the app may be open) |
 | `make dev DEV_TITLE=<title ID>` | Development build, `build/dev/PPSA98515` (or `EDEN_DEV_PACKAGE_DIR`): profiling counters, `dev-settings.txt` switches, boots the given title |
-| `make test` | Host (Linux) build of the emulator and its test suites |
+| `make test` | Host (Linux) test suites of the port's code (no desktop emulator is built; only the PS5 app is) |
 | `make deps` | Fetch missing dependencies at their pinned revisions |
 | `make deps-status` | List the dependencies, where they live and whether they match their pins |
 | `make prepare` | Everything besides Eden itself: build cache, FFmpeg, packaging tool, driver stub, RADV |
