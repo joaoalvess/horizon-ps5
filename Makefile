@@ -45,8 +45,7 @@ dev: prepare ## Development build that boots DEV_TITLE: build/dev/PPSA98515
 prepare: deps ## Build cache, Eden source, FFmpeg, packaging tool, driver stub, RADV (what is missing)
 	bash tools/prepare-build.sh
 
-deps: ## Fetch missing dependencies at their pinned revisions (and the Eglantine submodule)
-	git submodule update --init Eglantine
+deps: ## Fetch missing dependencies at their pinned revisions
 	$(PYTHON) tools/deps.py fetch
 	bash tools/apply-eglantine-patches.sh
 
