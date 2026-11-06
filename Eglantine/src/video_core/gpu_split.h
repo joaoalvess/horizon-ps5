@@ -103,6 +103,13 @@ public:
     void Publish();
     /// Waits until the back executed everything sent so far.
     void Drain();
+    /// The entry just sent can write guest memory (a compute, copy or upload engine's method):
+    /// a command list on a GPU-written page waits for the back only up to here (DrainToLastWriter).
+    void NoteWriter() {
+        last_writer_position = write_position;
+    }
+    /// Waits until the back executed the last entry that could have written guest memory.
+    void DrainToLastWriter();
 
 private:
     enum class Kind : u64 {
@@ -160,6 +167,7 @@ private:
 
     // Front side.
     u64 write_position{};
+    u64 last_writer_position{};
     u64 published_local{};
     u64 consumed_cache{};
     /// Words between publishes: small right after a drain, while the back has nothing to do.

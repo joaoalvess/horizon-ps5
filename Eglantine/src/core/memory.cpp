@@ -960,9 +960,35 @@ struct Memory::Impl {
             current_area = {};
             read_area_generations[core] = generation;
         }
+        // Without a fastmem arena every guest read of a GPU-tracked page comes here, and each
+        // one the area cache misses is a round trip through the GPU thread (the guest core
+        // waits, the GPU thread wakes). With fastmem only pages the buffer cache armed a read
+        // trap on, after a GPU write, take that path; the rest read memory directly. The same
+        // rule here: a Switch 2 title's page the GPU never wrote through the buffer cache
+        // (Nx2MarkGpuWritten, kept for the whole session) has nothing to flush.
+        // EDEN_PS5_UNWRITTEN_READS=0 sends every miss through the GPU thread again.
+        static const bool unwritten_reads_direct = [] {
+            const char* value = std::getenv("EDEN_PS5_UNWRITTEN_READS");
+            return value == nullptr || value[0] != '0';
+        }();
+        const bool nx2 = Tegra::g_nx2_ampere.load(std::memory_order_relaxed);
         gpu_device_memory.ApplyOpOnPointer(p, scratch_buffers[core], [&](DAddr address) {
             diagnostics.AddAlias();
             const DAddr end_address = address + size;
+            if (unwritten_reads_direct && nx2 && !current_page_table->fastmem_arena) {
+                bool written = false;
+                constexpr DAddr page_mask = (DAddr{1} << Tegra::Nx2WrittenPageBits) - 1;
+                for (DAddr page = address & ~page_mask; page < end_address; page += page_mask + 1) {
+                    if (Tegra::Nx2IsGpuWritten(page)) {
+                        written = true;
+                        break;
+                    }
+                }
+                if (!written) {
+                    diagnostics.Add(Event::AreaHit);
+                    return;
+                }
+            }
             if (current_area.start_address <= address && end_address <= current_area.end_address)
                 [[likely]] {
                 diagnostics.Add(Event::AreaHit);

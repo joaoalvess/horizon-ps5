@@ -323,11 +323,24 @@ struct System::Impl {
 
         // Switch 2 titles size their heap from the total memory and need the 12 GiB layout. Set it
         // as a per-game value, so RestoreGlobalState brings back the configured layout afterwards.
-        if (switch2_program &&
-            Settings::values.memory_layout_mode.GetValue() != Settings::MemoryLayout::Memory_12Gb) {
-            LOG_INFO(Core, "Switch 2 program: using the 12 GiB memory layout");
+        // EDEN_NX2_MEMORY_LAYOUT_GB=6|8|10 gives a Switch 2 title a smaller layout (its graphics
+        // server region stays): on a console whose shared pool also holds the host's texture
+        // copies, a title that fills whatever it is given runs the pool dry.
+        const auto switch2_layout = [] {
+            const char* value = std::getenv("EDEN_NX2_MEMORY_LAYOUT_GB");
+            const long gb = value != nullptr ? std::strtol(value, nullptr, 10) : 12;
+            return gb <= 6 ? Settings::MemoryLayout::Memory_6Gb
+                 : gb <= 8 ? Settings::MemoryLayout::Memory_8Gb
+                 : gb <= 10 ? Settings::MemoryLayout::Memory_10Gb
+                            : Settings::MemoryLayout::Memory_12Gb;
+        }();
+        if (switch2_program && Settings::values.memory_layout_mode.GetValue() != switch2_layout) {
+            LOG_INFO(Core, "Switch 2 program: using the {} memory layout",
+                     switch2_layout == Settings::MemoryLayout::Memory_12Gb ? "12 GiB"
+                     : switch2_layout == Settings::MemoryLayout::Memory_10Gb ? "10 GiB"
+                     : switch2_layout == Settings::MemoryLayout::Memory_8Gb ? "8 GiB" : "6 GiB");
             Settings::values.memory_layout_mode.SetGlobal(false);
-            Settings::values.memory_layout_mode.SetValue(Settings::MemoryLayout::Memory_12Gb);
+            Settings::values.memory_layout_mode.SetValue(switch2_layout);
         }
 
         // The Switch 2 counter runs at 31.25 MHz and its SDK converts ticks with that constant

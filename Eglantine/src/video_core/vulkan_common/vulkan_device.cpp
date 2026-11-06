@@ -780,7 +780,13 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
             // 64 MiB blocks on discrete GPUs too: with 256 MiB ones, Switch 2 titles' mix of
             // texture sizes left ~38% of the image blocks empty (2 GB of an 8 GB card in title
             // 1), which the texture cache counted as used and kept evicting textures for.
-            .preferredLargeHeapBlockSize = 64u * 1024u * 1024u,
+            // EDEN_PS5_VMA_BLOCK_MIB=<n>: smaller blocks go back to a shared pool sooner when
+            // their last allocation is freed (the console's pool is also the guest's memory).
+            .preferredLargeHeapBlockSize = [] {
+                const char* value = std::getenv("EDEN_PS5_VMA_BLOCK_MIB");
+                const unsigned long mib = value != nullptr ? std::strtoul(value, nullptr, 10) : 64;
+                return static_cast<VkDeviceSize>(mib >= 4 && mib <= 256 ? mib : 64) * 1024u * 1024u;
+            }(),
             .pAllocationCallbacks = nullptr,
             .pDeviceMemoryCallbacks = nullptr,
             .pHeapSizeLimit = heap_size_limit != 0 ? heap_size_limits.data() : nullptr,

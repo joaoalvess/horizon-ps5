@@ -44,6 +44,19 @@ u32 ReadSemaphoreWord(DmaPusher& dma_pusher, GPUVAddr address) {
     return dma_pusher.memory_manager.Read<u32>(address);
 }
 
+// Whether an acquire may be answered from the guest's own copy of the word before the split's
+// back is drained (EDEN_NX2_ACQUIRE_DRAIN_FIRST=1: always drain first). The back writes a
+// release's value straight into guest memory, so a word that already meets the acquire is final
+// for a counter that only grows; one that does not takes the drained path below as before. At
+// Mario Kart World's title screen the unconditional drain was 39% of the front thread's time.
+bool AcquireChecksRawWordFirst() {
+    static const bool drain_first = [] {
+        const char* value = std::getenv("EDEN_NX2_ACQUIRE_DRAIN_FIRST");
+        return value != nullptr && value[0] == '1';
+    }();
+    return !drain_first;
+}
+
 // With the GPU thread split (gpu_split.h) the rasterizer belongs to the back thread: work that
 // only feeds it runs there in order; reads of what it wrote first wait for it (DrainBack).
 template <typename Func>
@@ -80,6 +93,10 @@ bool Puller::CanResumeAcquire(DmaPusher& dma_pusher) {
     }
     // The release may still be queued for the split GPU thread's back half (and the caches
     // ReadSemaphoreWord asks are its state).
+    if (AcquireChecksRawWordFirst() &&
+        pending_acquire->Matches(dma_pusher.memory_manager.Read<u32>(pending_acquire->address))) {
+        return true;
+    }
     DrainBack();
     const u32 current = ReadSemaphoreWord(dma_pusher, pending_acquire->address);
     if (Nx2SemaphoreWaiters::Get().Latched(this)) {
@@ -245,6 +262,10 @@ void Puller::ProcessSemaphoreTriggerMethod(DmaPusher& dma_pusher) {
             return;
         }
         VideoCommon::Nx2Profile::Add(VideoCommon::Nx2Profile::Counter::AcquireChecks, 1);
+        if (AcquireChecksRawWordFirst() &&
+            acquire.Matches(dma_pusher.memory_manager.Read<u32>(acquire.address))) {
+            return;
+        }
         DrainBack();
         if (acquire.Matches(ReadSemaphoreWord(dma_pusher, acquire.address))) {
             return;

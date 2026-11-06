@@ -166,6 +166,20 @@ void TextureCache<P>::RunGarbageCollector() {
             return false;
         }
         const bool must_download = IsDownloadable(image) && False(image.flags & ImageFlagBits::BadOverlap);
+        // A costly image (decoded ASTC) evicted in aggressive mode comes back through the GPU
+        // decoder the next time it is drawn: at Mario Kart World's title screen on the console,
+        // where the shared pool stays short, the collector evicted ~2,300 of them per 600 frames
+        // and the back thread spent 130 ms a second re-uploading. Such an image is kept while it
+        // was used within EDEN_NX2_TC_COSTLY_MIN_AGE frames (0: the usual 10 of aggressive mode).
+        static const u64 costly_min_age = [] {
+            const char* value = std::getenv("EDEN_NX2_TC_COSTLY_MIN_AGE");
+            return value != nullptr ? std::strtoull(value, nullptr, 10) : 0ULL;
+        }();
+        if (aggressive_mode && costly_min_age != 0 && True(image.flags & ImageFlagBits::CostlyLoad) &&
+            frame_tick - lru_cache.Tick(image.lru_index) < costly_min_age) {
+            ++probe_costly_skips;
+            return false;
+        }
         if ((!aggressive_mode && True(image.flags & ImageFlagBits::CostlyLoad)) || (!high_priority_mode && must_download)) {
             probe_costly_skips += !aggressive_mode && True(image.flags & ImageFlagBits::CostlyLoad);
             probe_dirty_skips += !high_priority_mode && must_download;

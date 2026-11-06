@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <condition_variable>
 #include <cstddef>
 #include <functional>
@@ -349,6 +350,7 @@ private:
     std::mutex queue_mutex;
     std::condition_variable_any event_cv;
     bool worker_waiting{}; ///< The worker is waiting for work (guarded by queue_mutex)
+    std::atomic<u32> queued_chunks{}; ///< Chunks in work_queue, for the worker's poll without the mutex
     std::jthread worker_thread;
 
     std::chrono::steady_clock::duration frame_interval{};

@@ -7,6 +7,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdlib>
 #include <atomic>
 #include <cstdio>
 #include <memory>
@@ -811,6 +812,16 @@ bool BufferCache<P>::IsRegionGpuModified(DAddr addr, size_t size) {
 template <class P>
 void BufferCache<P>::NoteCpuRead(DAddr addr, size_t size) {
     if (AsyncBufferDownloads()) {
+        return;
+    }
+    // EDEN_NX2_CPU_READ_RANGES=0: do not remember read ranges (console A/B: with guest reads
+    // answered on the guest core every read of a tracked page is noted, after which each GPU
+    // write there is copied back at every fence, which made ~3,700 fences a second real).
+    static const bool note_reads = [] {
+        const char* value = std::getenv("EDEN_NX2_CPU_READ_RANGES");
+        return value == nullptr || value[0] != '0';
+    }();
+    if (!note_reads) {
         return;
     }
     size_t covered = 0;

@@ -770,13 +770,22 @@ void DmaPusher::CallMethod(u32 argument) {
         }
         if (split.Active()) {
             const GPUVAddr segment = dma_state.dma_get + dma_state.dma_word_offset;
+            const auto type = subchannel_type[dma_state.subchannel];
+            // Engines that write guest memory, and the 3D engine's inline uploads: a GPU-written
+            // command list waits for the back only up to the last of their methods
+            // (DrainToLastWriter), not for every draw.
+            const bool writer = type != Engines::EngineTypes::Maxwell3D ||
+                                dma_state.method == (offsetof(Engines::Maxwell3D::Regs, launch_dma) / sizeof(u32)) ||
+                                dma_state.method == (offsetof(Engines::Maxwell3D::Regs, inline_data) / sizeof(u32));
             if (split.FrontMacros()) {
-                const auto type = subchannel_type[dma_state.subchannel];
                 if (type == Engines::EngineTypes::Maxwell3D) {
                     auto* const maxwell3d = static_cast<Engines::Maxwell3D*>(subchannel);
                     if (maxwell3d->GetNativeMacroEngine().native_turing) {
                         maxwell3d->FrontCallMethod(system, split, dma_state.method, argument,
                                                    dma_state.is_last_call);
+                        if (writer) {
+                            split.NoteWriter();
+                        }
                         return;
                     }
                 } else if (type == Engines::EngineTypes::KeplerCompute) {
@@ -784,12 +793,16 @@ void DmaPusher::CallMethod(u32 argument) {
                     if (compute->FrontRunsMacros()) {
                         compute->FrontCallMethod(system, split, dma_state.method, argument,
                                                  dma_state.is_last_call, &segment);
+                        split.NoteWriter();
                         return;
                     }
                 }
             }
             split.Method(subchannel, dma_state.method, argument, dma_state.is_last_call,
                          WantsSegment() ? &segment : nullptr);
+            if (writer) {
+                split.NoteWriter();
+            }
             return;
         }
         if (!subchannel->execution_mask[dma_state.method]) {
@@ -839,13 +852,20 @@ void DmaPusher::CallMultiMethod(const u32* base_start, u32 num_methods) {
         }
         if (split.Active()) {
             const GPUVAddr segment = dma_state.dma_get + dma_state.dma_word_offset;
+            const auto type = subchannel_type[dma_state.subchannel];
+            // A multi-word write to the inline data register is an upload too.
+            const bool writer = type != Engines::EngineTypes::Maxwell3D ||
+                                dma_state.method <= (offsetof(Engines::Maxwell3D::Regs, inline_data) / sizeof(u32)) &&
+                                    dma_state.method + num_methods > (offsetof(Engines::Maxwell3D::Regs, launch_dma) / sizeof(u32));
             if (split.FrontMacros()) {
-                const auto type = subchannel_type[dma_state.subchannel];
                 if (type == Engines::EngineTypes::Maxwell3D) {
                     auto* const maxwell3d = static_cast<Engines::Maxwell3D*>(subchannel);
                     if (maxwell3d->GetNativeMacroEngine().native_turing) {
                         maxwell3d->FrontCallMultiMethod(system, split, dma_state.method, base_start,
                                                         num_methods, dma_state.method_count);
+                        if (writer) {
+                            split.NoteWriter();
+                        }
                         return;
                     }
                 } else if (type == Engines::EngineTypes::KeplerCompute) {
@@ -853,12 +873,16 @@ void DmaPusher::CallMultiMethod(const u32* base_start, u32 num_methods) {
                     if (compute->FrontRunsMacros()) {
                         compute->FrontCallMultiMethod(system, split, dma_state.method, base_start,
                                                       num_methods, dma_state.method_count, &segment);
+                        split.NoteWriter();
                         return;
                     }
                 }
             }
             split.MultiMethod(subchannel, dma_state.method, base_start, num_methods,
                               dma_state.method_count, WantsSegment() ? &segment : nullptr);
+            if (writer) {
+                split.NoteWriter();
+            }
             return;
         }
         VideoCommon::Nx2Profile::Scope method_scope{VideoCommon::Nx2Profile::Zone::Method};
@@ -889,7 +913,7 @@ void DmaPusher::FlushGpuWrittenCommands(GPUVAddr address, size_t size) {
     }
     Nx2SynchronizeGpuWrittenCommands(address, size,
         [] {
-            if (auto& split = VideoCommon::GpuSplit::Get(); split.Active()) split.Drain();
+            if (auto& split = VideoCommon::GpuSplit::Get(); split.Active()) split.DrainToLastWriter();
         },
         [&](GPUVAddr page) { return memory_manager.GpuToCpuAddress(page); },
         [&] {

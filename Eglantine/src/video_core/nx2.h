@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <atomic>
 #include <functional>
 #include <limits>
@@ -99,12 +100,29 @@ template <typename Translate>
     }
 }
 
+// Draining the split's back before every command list serialized the two threads: at Mario
+// Kart World's title screen the front waited ~69,000 times a second, a third of its time. The
+// written-page bits are checked first and only a list on a page the GPU has written waits for
+// the back and flushes. A page's first GPU write can still be queued on the back when the front
+// reads a list on it (the bit is set as the back runs the write): that list is read once as it
+// was. EDEN_NX2_DRAIN_FIRST=1 restores the unconditional drain.
 template <typename Drain, typename Translate, typename Flush>
 void Nx2SynchronizeGpuWrittenCommands(GPUVAddr address, size_t size, Drain&& drain,
                                      Translate&& translate, Flush&& flush) {
     if (size == 0) return;
-    drain();
-    if (Nx2HasGpuWrittenPage(address, size, translate)) flush();
+    static const bool drain_first = [] {
+        const char* value = std::getenv("EDEN_NX2_DRAIN_FIRST");
+        return value != nullptr && value[0] == '1';
+    }();
+    if (drain_first) {
+        drain();
+        if (Nx2HasGpuWrittenPage(address, size, translate)) flush();
+        return;
+    }
+    if (Nx2HasGpuWrittenPage(address, size, translate)) {
+        drain();
+        flush();
+    }
 }
 
 // NVN2 queues release their progress values into the second page of a two-page GPU-accessible

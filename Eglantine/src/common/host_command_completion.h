@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include <atomic>
+#include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <stop_token>
@@ -21,6 +24,16 @@ public:
     }
 
     void Wait() {
+        // A command the GPU thread answers in microseconds is not worth a sleep and a wake-up:
+        // EDEN_PS5_READ_SPIN_US=<n> polls for that long first (0: block at once).
+        if (const long long spin = SpinNanoseconds(); spin > 0) {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::nanoseconds{spin};
+            while (!done_flag.load(std::memory_order_acquire)) {
+                if (std::chrono::steady_clock::now() >= deadline) break;
+                PauseCpu();
+            }
+            if (done_flag.load(std::memory_order_acquire)) return;
+        }
         std::unique_lock lock{mutex};
         ready.wait(lock, [this] { return done; });
     }
@@ -33,7 +46,20 @@ public:
     void Signal() {
         std::lock_guard lock{mutex};
         done = true;
+        done_flag.store(true, std::memory_order_release);
         ready.notify_one();
+    }
+    static long long SpinNanoseconds() {
+        static const long long value = [] {
+            const char* text = std::getenv("EDEN_PS5_READ_SPIN_US");
+            return text != nullptr ? std::strtoll(text, nullptr, 10) * 1000 : 0LL;
+        }();
+        return value;
+    }
+    static void PauseCpu() {
+#if defined(__x86_64__) || defined(_M_X64)
+        __builtin_ia32_pause();
+#endif
     }
 
 private:
@@ -44,8 +70,10 @@ private:
     void Reset() {
         std::lock_guard lock{mutex};
         done = false;
+        done_flag.store(false, std::memory_order_release);
     }
     std::mutex mutex;
+    std::atomic<bool> done_flag{};
     std::condition_variable_any ready;
     bool done{};
     bool reusable{true};

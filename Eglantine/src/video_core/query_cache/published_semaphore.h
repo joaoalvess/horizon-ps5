@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <limits>
 #include <mutex>
+#include "common/spin_recursive_mutex.h"
 #include <optional>
 
 namespace VideoCommon {
@@ -99,7 +100,9 @@ private:
         key ^= key >> 31;
         return key % Capacity;
     }
-    std::mutex mutex;
+    // Taken per guest write and per inline upload from several threads for a few instructions:
+    // a sleeping mutex cost the split's back thread a system call whenever a guest core held it.
+    Common::SpinRecursiveMutex mutex;
     std::array<Entry, Capacity> entries{};
     std::uint64_t serial{};
 };

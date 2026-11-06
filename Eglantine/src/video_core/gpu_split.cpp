@@ -216,6 +216,39 @@ void GpuSplit::Drain() {
     }
 }
 
+void GpuSplit::DrainToLastWriter() {
+    // Waiting only up to the last compute, copy or upload method crashed Mario Kart World
+    // while loading on the console (a list read before its writer ran, then a clear with a
+    // garbage render target): something the front does not count as a writer fills them. Off
+    // unless EDEN_NX2_LIST_DRAIN_TO_WRITER=1; the default waits for everything sent.
+    static const bool to_writer = [] {
+        const char* value = std::getenv("EDEN_NX2_LIST_DRAIN_TO_WRITER");
+        return value != nullptr && value[0] == '1';
+    }();
+    if (!to_writer) {
+        Drain();
+        return;
+    }
+    const u64 position = last_writer_position;
+    consumed_cache = consumed.load(std::memory_order_acquire);
+    if (consumed_cache >= position) {
+        return;
+    }
+    Publish();
+    Nx2Profile::Scope scope{Nx2Profile::Zone::SplitDrain};
+    for (u32 spins = 0;; ++spins) {
+        consumed_cache = consumed.load(std::memory_order_acquire);
+        if (consumed_cache >= position) {
+            return;
+        }
+        if (spins < 16384) {
+            Pause();
+        } else {
+            std::this_thread::yield();
+        }
+    }
+}
+
 void GpuSplit::SwitchEngine(Tegra::Engines::EngineInterface* engine) {
     front_engine = engine;
     u64* const entry = Reserve(2);

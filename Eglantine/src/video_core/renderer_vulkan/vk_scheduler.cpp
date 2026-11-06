@@ -7,6 +7,8 @@
 // SPDX-FileCopyrightText: Copyright 2019 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <chrono>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -119,6 +121,7 @@ void Scheduler::DispatchWork() {
         {
             std::scoped_lock ql{queue_mutex};
             work_queue.push(std::move(chunk));
+            queued_chunks.fetch_add(1, std::memory_order_acq_rel);
             wake = worker_waiting;
         }
         if (wake) {
@@ -313,6 +316,7 @@ void Scheduler::WorkerThread(std::stop_token stop_token) {
         }
 
         work = std::move(work_queue.front());
+        queued_chunks.fetch_sub(1, std::memory_order_acq_rel);
         work_queue.pop();
         event_cv.notify_all();
         return true;
@@ -323,6 +327,28 @@ void Scheduler::WorkerThread(std::stop_token stop_token) {
 
         {
             std::unique_lock lk{queue_mutex};
+
+            // The next chunk usually follows within microseconds; sleeping between chunks made
+            // the GPU thread pay a wake-up system call per dispatch (DispatchWork notifies a
+            // waiting worker). EDEN_PS5_WORKER_SPIN_US=<n>: poll for that long before waiting.
+            static const long long spin_ns = [] {
+                const char* text = std::getenv("EDEN_PS5_WORKER_SPIN_US");
+                return text != nullptr ? std::strtoll(text, nullptr, 10) * 1000 : 0LL;
+            }();
+            // The poll reads a counter, not the queue: taking the queue mutex every iteration
+            // made the GPU thread's DispatchWork contend for it (a system call per dispatch).
+            if (spin_ns > 0 && work_queue.empty()) {
+                lk.unlock();
+                const auto deadline = std::chrono::steady_clock::now() + std::chrono::nanoseconds{spin_ns};
+                u32 spins = 0;
+                while (queued_chunks.load(std::memory_order_acquire) == 0 && !stop_token.stop_requested()) {
+#if defined(__x86_64__) || defined(_M_X64)
+                    __builtin_ia32_pause();
+#endif
+                    if ((++spins & 63) == 0 && std::chrono::steady_clock::now() >= deadline) break;
+                }
+                lk.lock();
+            }
 
             // Wait for work.
             event_cv.wait(lk, stop_token, [&] {
