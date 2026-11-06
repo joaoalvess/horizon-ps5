@@ -476,8 +476,14 @@ std::shared_ptr<const LoweredNativeCode> GenericEnvironment::LowerNativeCode(u32
         }
         return offset;
     };
+    // EDEN_NX2_SHADER_DUMP_ALL=1: every captured program, not only those the lowering refused (the
+    // Ampere lowering's coverage and cost are measured offline against a game's whole set).
+    static const bool dump_all = [] {
+        const char* value = std::getenv("EDEN_NX2_SHADER_DUMP_ALL");
+        return value != nullptr && value[0] == '1';
+    }();
     if (static const char* const dump_directory = std::getenv("EDEN_NX2_SHADER_DUMP");
-        dump_directory != nullptr && !lowered) {
+        dump_directory != nullptr && (!lowered || dump_all)) {
         const auto folder = std::filesystem::path{dump_directory};
         const auto path = folder / fmt::format("{:016x}-{}-{:x}.bin", Shader::Ampere::NativeProgramKey(native),
                                                source_header_size == 0 ? "cs" : "gfx", program_base);

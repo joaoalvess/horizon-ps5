@@ -12,6 +12,8 @@
 #include <vector>
 #include <queue>
 
+#include <cstdlib>
+#include "common/logging.h"
 #include "common/settings.h"
 #include "shader_recompiler/exception.h"
 #include "shader_recompiler/frontend/ir/basic_block.h"
@@ -473,6 +475,37 @@ IR::Program TranslateProgram(ObjectPool<IR::Inst>& inst_pool, ObjectPool<IR::Blo
 
     CollectInterpolationInfo(env, program);
     AddNVNStorageBuffers(program);
+    // EDEN_NX2_IR_STATS=1: the optimized IR's size, lane shuffles and FMAs of programs with many
+    // shuffles (the Ampere matrix instructions' emulation), to compare their lowerings.
+    if (static const bool ir_stats = [] {
+            const char* value = std::getenv("EDEN_NX2_IR_STATS");
+            return value != nullptr && value[0] == '1';
+        }();
+        ir_stats) {
+        size_t insts = 0, shuffles = 0, fmas = 0;
+        for (IR::Block* const block : program.blocks) {
+            for (const IR::Inst& inst : block->Instructions()) {
+                ++insts;
+                switch (inst.GetOpcode()) {
+                case IR::Opcode::ShuffleIndex:
+                case IR::Opcode::ShuffleUp:
+                case IR::Opcode::ShuffleDown:
+                case IR::Opcode::ShuffleButterfly:
+                    ++shuffles;
+                    break;
+                case IR::Opcode::FPFma32:
+                    ++fmas;
+                    break;
+                default:
+                    break;
+                }
+            }
+        }
+        if (shuffles >= 16) {
+            LOG_WARNING(Shader, "NX2_IR_STATS stage={} start={:#x} insts={} shuffles={} fma32={}",
+                        static_cast<u32>(program.stage), env.StartAddress(), insts, shuffles, fmas);
+        }
+    }
     return program;
 }
 

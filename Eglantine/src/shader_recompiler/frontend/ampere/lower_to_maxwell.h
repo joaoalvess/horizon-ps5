@@ -1300,6 +1300,27 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
             if ((mode != "fast" || !support_cooperative_matrix) &&
                 (soft_hmma == nullptr || soft_hmma[0] != '1'))
                 return fail(index, "native matrix multiply cooperative path unavailable");
+            // Native lowering (default; EDEN_NX2_HMMA_NATIVE=0 keeps the Maxwell expansion below):
+            // one HMMA_NATIVE pseudo-instruction whose translator builds the IR directly
+            // (frontend/maxwell/translate/impl/hmma_native.cpp), 32 lane shuffles instead of 96
+            // and no Maxwell temporaries. Same results, product order and f16 rounding.
+            static const bool hmma_native = [] {
+                const char* value = std::getenv("EDEN_NX2_HMMA_NATIVE");
+                return value == nullptr || value[0] != '0';
+            }();
+            if ((mode != "fast" || !support_cooperative_matrix) && hmma_native) {
+                const u32 hmma_mode = insn.words[2] & ~0xffU;
+                const u32 a_count = hmma_mode == 0 ? 2U : 4U, b_count = hmma_mode == 0 ? 1U : 2U;
+                if (native_predicate != 7 || (hmma_mode != 0 && hmma_mode != 0x800) ||
+                    (insn.words[1] & ~0xffU) || (insn.words[3] & 0xc00001ffU) ||
+                    dest % 2 || dest + 2 > 255 || a % a_count || a + a_count > 255 ||
+                    b % b_count || b + b_count > 255 || (c != 255 && (c % 2 || c + 2 > 255)))
+                    return fail(index, "native half matrix multiply mode");
+                emit((0x5D38ULL << 48) | predicate | (u64{hmma_mode != 0} << 47) |
+                     (static_cast<u64>(c) << 39) | (static_cast<u64>(b) << 20) |
+                     (static_cast<u64>(a) << 8) | static_cast<u64>(dest));
+                break;
+            }
             if (mode != "fast" || !support_cooperative_matrix) {
                 // Software warp expansion (upstream nx2): no tensor or cooperative-matrix
                 // extension needed. Donkey Kong Bananza's update runs HMMA in compute passes the
