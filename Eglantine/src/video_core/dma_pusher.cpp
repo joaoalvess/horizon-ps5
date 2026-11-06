@@ -1,3 +1,5 @@
+#include "common/scope_exit.h"
+#include "video_core/nx2_loading_probe.h"
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -128,7 +130,8 @@ bool Configured() noexcept {
 }
 
 bool Enabled() noexcept {
-    return !Directory().empty() && !finished.load(std::memory_order_relaxed);
+    return VideoCommon::LoadingProbe::capture_enabled.load(std::memory_order_relaxed) &&
+           !Directory().empty() && !finished.load(std::memory_order_relaxed);
 }
 
 u64 BeginSubmission(s32 fd, u32 ioctl, u32 variant, u64 session,
@@ -579,11 +582,25 @@ void DmaPusher::RecordCapture(const char* phase, std::span<const CommandHeader> 
 }
 
 size_t DmaPusher::ProcessCommands(std::span<const CommandHeader> commands, size_t word_offset) {
+    // Temporary: keep the complete last large block, because the bounded ring retains only its ends.
+    if (GpfifoCapture::Enabled() && commands.size() > 4096 && commands.size_bytes() <= (2U << 20)) {
+        const auto directory = std::getenv("EDEN_NX2_GPFIFO_DUMP");
+        const auto path = std::filesystem::path{directory} / "last-large.bin";
+        if (std::FILE* file = std::fopen(path.c_str(), "wb")) {
+            const std::array<u64, 3> header{dma_state.dma_get, word_offset, commands.size()};
+            std::fwrite(header.data(), sizeof(u64), header.size(), file);
+            std::fwrite(commands.data(), sizeof(CommandHeader), commands.size(), file);
+            std::fclose(file);
+        }
+    }
     RecordCapture("execute-begin", commands, word_offset);
 #ifdef ARCHITECTURE_x86_64
     const bool trace_bind = !TuringMacroJit::RtDump::Directory().empty();
 #endif
     for (size_t index = 0; index < commands.size();) {
+        VideoCommon::LoadingProbe::command_address.store(dma_state.dma_get, std::memory_order_relaxed);
+        VideoCommon::LoadingProbe::command_word.store(word_offset + index, std::memory_order_relaxed);
+        VideoCommon::LoadingProbe::command_raw.store(commands[index].argument, std::memory_order_relaxed);
 #ifdef ARCHITECTURE_x86_64
         if (trace_bind) {
             TraceBindPacket(*this, commands, index, word_offset);
@@ -727,6 +744,13 @@ bool DmaPusher::WantsSegment() const {
 }
 
 void DmaPusher::CallMethod(u32 argument) {
+    VideoCommon::LoadingProbe::command_channel.store(channel_state.bind_id, std::memory_order_relaxed);
+    VideoCommon::LoadingProbe::command_subchannel.store(dma_state.subchannel, std::memory_order_relaxed);
+    VideoCommon::LoadingProbe::command_remaining.store(dma_state.method_count, std::memory_order_relaxed);
+    VideoCommon::LoadingProbe::command_value.store(argument, std::memory_order_relaxed);
+    VideoCommon::LoadingProbe::command.Mark("call enter", dma_state.method);
+    SCOPE_EXIT { VideoCommon::LoadingProbe::command.Mark("call done", dma_state.method); };
+
     if (g_semaphore_watch != 0) [[unlikely]] {
         WatchArgument(dma_state.method, argument);
     }
@@ -772,7 +796,9 @@ void DmaPusher::CallMethod(u32 argument) {
             subchannel->method_sink.emplace_back(dma_state.method, argument);
         } else {
             VideoCommon::Nx2Profile::Scope method_scope{VideoCommon::Nx2Profile::Zone::Method};
+            VideoCommon::LoadingProbe::command.Mark("consume sink", dma_state.method);
             subchannel->ConsumeSink(system);
+            VideoCommon::LoadingProbe::command.Mark("engine call", dma_state.method);
             subchannel->current_dma_segment = dma_state.dma_get + dma_state.dma_word_offset;
 #ifdef ARCHITECTURE_x86_64
             if (dma_state.method == NativeBindMethod &&
@@ -790,6 +816,13 @@ void DmaPusher::CallMethod(u32 argument) {
 }
 
 void DmaPusher::CallMultiMethod(const u32* base_start, u32 num_methods) {
+    VideoCommon::LoadingProbe::command_channel.store(channel_state.bind_id, std::memory_order_relaxed);
+    VideoCommon::LoadingProbe::command_subchannel.store(dma_state.subchannel, std::memory_order_relaxed);
+    VideoCommon::LoadingProbe::command_remaining.store(dma_state.method_count, std::memory_order_relaxed);
+    VideoCommon::LoadingProbe::command_value.store(num_methods ? base_start[0] : 0U, std::memory_order_relaxed);
+    VideoCommon::LoadingProbe::command.Mark("call enter", dma_state.method);
+    SCOPE_EXIT { VideoCommon::LoadingProbe::command.Mark("call done", dma_state.method); };
+
     if (g_semaphore_watch != 0) [[unlikely]] {
         for (u32 i = 0; i < num_methods; ++i) {
             WatchArgument(dma_state.method + (dma_state.non_incrementing ? 0 : i), base_start[i]);
@@ -829,7 +862,9 @@ void DmaPusher::CallMultiMethod(const u32* base_start, u32 num_methods) {
             return;
         }
         VideoCommon::Nx2Profile::Scope method_scope{VideoCommon::Nx2Profile::Zone::Method};
+        VideoCommon::LoadingProbe::command.Mark("consume sink", dma_state.method);
         subchannel->ConsumeSink(system);
+        VideoCommon::LoadingProbe::command.Mark("engine call", dma_state.method);
         subchannel->current_dma_segment = dma_state.dma_get + dma_state.dma_word_offset;
 #ifdef ARCHITECTURE_x86_64
         if (dma_state.method == NativeBindMethod &&

@@ -121,6 +121,11 @@ public:
     }
 
     /// Value of a release the GPU already processed whose write may still be in flight on the host.
+    /// Last completed semaphore payload, never an uncompleted queued release.
+    virtual std::optional<u32> ReadPublishedSemaphore(DAddr addr, const void* pointer) {
+        return std::nullopt;
+    }
+
     virtual std::optional<u32> PendingSemaphoreRelease(DAddr addr) {
         return std::nullopt;
     }

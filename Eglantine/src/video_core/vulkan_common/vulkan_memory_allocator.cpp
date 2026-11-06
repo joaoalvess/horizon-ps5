@@ -5,6 +5,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <cstdio>
+#include <mutex>
+#include <unistd.h>
 #include <array>
 #include <bit>
 #include <limits>
@@ -229,7 +232,8 @@ vk::Image MemoryAllocator::CreateImage(const VkImageCreateInfo &ci, bool dedicat
     // They take the unbacked sparse fallback below.
     const u64 texels = u64{ci.extent.width} * ci.extent.height * ci.extent.depth * ci.arrayLayers;
     const bool huge = texels > (u64{1} << 28) && ci.samples == VK_SAMPLE_COUNT_1_BIT &&
-                      device.IsSparseResidencyImageSupported(ci.imageType);
+                      device.IsSparseResidencyImageSupported(ci.imageType) &&
+                      device.CanUseUnbackedSparseImages();
     VkResult result = huge ? VK_ERROR_OUT_OF_DEVICE_MEMORY
                            : vmaCreateImage(allocator, &ci, &alloc_ci, &handle, &allocation, &alloc_info);
     if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY && !huge) {
@@ -260,6 +264,45 @@ vk::Image MemoryAllocator::CreateImage(const VkImageCreateInfo &ci, bool dedicat
             return sparse;
         }
     }
+    // Temporary per-process allocation evidence, kept across the crash handler's restart.
+    if (result != VK_SUCCESS || alloc_info.size >= (8ULL << 20)) {
+        static std::mutex probe_mutex;
+        static unsigned probe_rows{};
+        std::lock_guard probe_lock{probe_mutex};
+        if (result != VK_SUCCESS || probe_rows < 8192) {
+            ++probe_rows;
+            VkMemoryRequirements requirements{};
+            if (result == VK_SUCCESS) {
+                requirements.size = alloc_info.size;
+            } else {
+                VkImage probe_image{};
+                const auto& dispatch = device.GetDispatchLoader();
+                if (dispatch.vkCreateImage(*device.GetLogical(), &ci, nullptr, &probe_image) == VK_SUCCESS) {
+                    dispatch.vkGetImageMemoryRequirements(*device.GetLogical(), probe_image, &requirements);
+                    dispatch.vkDestroyImage(*device.GetLogical(), probe_image, nullptr);
+                }
+            }
+            std::array<VmaBudget, VK_MAX_MEMORY_HEAPS> budgets{};
+            vmaGetHeapBudgets(allocator, budgets.data());
+            VmaTotalStatistics statistics{};
+            vmaCalculateStatistics(allocator, &statistics);
+            char path[160];
+            std::snprintf(path, sizeof(path), "/data/eglantineps5/logs/mkw-image-alloc-%d.tsv", getpid());
+            if (std::FILE* file = std::fopen(path, "a")) {
+                std::fprintf(file, "row=%u result=%d size=%ux%ux%u levels=%u layers=%u format=%u samples=%u usage=%x flags=%x requested=%llu alignment=%llu types=%x vma_blocks=%llu vma_allocated=%llu heap0_usage=%llu heap0_budget=%llu\n",
+                    probe_rows, static_cast<int>(result), ci.extent.width, ci.extent.height,
+                    ci.extent.depth, ci.mipLevels, ci.arrayLayers, static_cast<unsigned>(ci.format),
+                    static_cast<unsigned>(ci.samples), ci.usage, ci.flags,
+                    static_cast<unsigned long long>(requirements.size),
+                    static_cast<unsigned long long>(requirements.alignment), requirements.memoryTypeBits,
+                    static_cast<unsigned long long>(statistics.total.statistics.blockBytes),
+                    static_cast<unsigned long long>(statistics.total.statistics.allocationBytes),
+                    static_cast<unsigned long long>(budgets[0].usage),
+                    static_cast<unsigned long long>(budgets[0].budget));
+                std::fclose(file);
+            }
+        }
+    }
     if (result != VK_SUCCESS) {
         LOG_CRITICAL(Render_Vulkan, "Image {}x{}x{} ({} levels, {} layers, format {}) failed: {}",
                      ci.extent.width, ci.extent.height, ci.extent.depth, ci.mipLevels,
@@ -282,7 +325,7 @@ vk::Image MemoryAllocator::CreateImage(const VkImageCreateInfo &ci, bool dedicat
 }
 
 vk::Image MemoryAllocator::CreateUnbackedImage(const VkImageCreateInfo &ci) const {
-    if (ci.samples != VK_SAMPLE_COUNT_1_BIT ||
+    if (!device.CanUseUnbackedSparseImages() || ci.samples != VK_SAMPLE_COUNT_1_BIT ||
         !device.IsSparseResidencyImageSupported(ci.imageType)) {
         return vk::Image{};
     }
@@ -356,6 +399,15 @@ vk::Buffer MemoryAllocator::CreateBuffer(const VkBufferCreateInfo &ci, MemoryUsa
         host_ci.preferredFlags = 0;
         host_ci.memoryTypeBits = 0;
         result = vmaCreateBuffer(allocator, &ci, &host_ci, &handle, &allocation, &alloc_info);
+    }
+    if (ci.size >= (64ULL << 20) || result != VK_SUCCESS) {
+        char path[160];
+        std::snprintf(path, sizeof(path), "/data/eglantineps5/logs/mkw-buffer-alloc-%d.tsv", getpid());
+        if (std::FILE* file = std::fopen(path, "a")) {
+            std::fprintf(file, "result=%d size=%llu memory_usage=%u flags=%x\n", int(result),
+                         static_cast<unsigned long long>(ci.size), unsigned(usage), ci.usage);
+            std::fclose(file);
+        }
     }
     vk::Check(result);
     vmaGetAllocationMemoryProperties(allocator, allocation, &property_flags);

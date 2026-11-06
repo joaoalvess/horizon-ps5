@@ -1,3 +1,4 @@
+#include "video_core/nx2_loading_probe.h"
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -491,30 +492,40 @@ void MemoryManager::ReadWordsUnsafe(GPUVAddr gpu_src_addr, u32* dest, u32 count)
 
 void MemoryManager::WriteBlockImpl(GPUVAddr gpu_dest_addr, const void* src_buffer, std::size_t size, [[maybe_unused]] VideoCommon::CacheType which, bool unsafe) {
     // Give Switch 2 sparse pages the write lands on their memory first (otherwise it is dropped).
+    VideoCommon::LoadingProbe::MarkWriteback("sparse write backing", gpu_dest_addr);
     Tegra::Nx2BackSparseWrite(gpu_dest_addr, size);
+    VideoCommon::LoadingProbe::MarkWriteback("sparse backing done", gpu_dest_addr);
     auto just_advance = [&]([[maybe_unused]] std::size_t page_index, [[maybe_unused]] std::size_t offset, std::size_t copy_amount) {
         src_buffer = static_cast<const u8*>(src_buffer) + copy_amount;
     };
     auto mapped_normal = [&](std::size_t page_index, std::size_t offset, std::size_t copy_amount) {
         const DAddr dev_addr_base = (DAddr(page_table[page_index]) << cpu_page_bits) + offset;
         if (!unsafe) {
+            VideoCommon::LoadingProbe::MarkWriteback("write invalidate", dev_addr_base);
             rasterizer->InvalidateRegion(dev_addr_base, copy_amount, which);
+            VideoCommon::LoadingProbe::MarkWriteback("write invalidate done", dev_addr_base);
         }
         if (u8* physical = memory.GetPointer<u8>(dev_addr_base)) [[likely]] {
+            VideoCommon::LoadingProbe::MarkWriteback("copy to physical", dev_addr_base);
             std::memcpy(physical, src_buffer, copy_amount);
+            VideoCommon::LoadingProbe::MarkWriteback("copy to physical done", dev_addr_base);
         }
         src_buffer = static_cast<const u8*>(src_buffer) + copy_amount;
     };
     auto mapped_big = [&](std::size_t page_index, std::size_t offset, std::size_t copy_amount) {
         const DAddr dev_addr_base = (DAddr(big_page_table_dev[page_index]) << cpu_page_bits) + offset;
         if (!unsafe) {
+            VideoCommon::LoadingProbe::MarkWriteback("write invalidate", dev_addr_base);
             rasterizer->InvalidateRegion(dev_addr_base, copy_amount, which);
+            VideoCommon::LoadingProbe::MarkWriteback("write invalidate done", dev_addr_base);
         }
         if (!IsBigPageContinuous(page_index)) [[unlikely]] {
             memory.WriteBlockUnsafe(dev_addr_base, src_buffer, copy_amount);
         } else {
             u8* physical = memory.GetPointer<u8>(dev_addr_base);
+            VideoCommon::LoadingProbe::MarkWriteback("copy to physical", dev_addr_base);
             std::memcpy(physical, src_buffer, copy_amount);
+            VideoCommon::LoadingProbe::MarkWriteback("copy to physical done", dev_addr_base);
         }
         src_buffer = static_cast<const u8*>(src_buffer) + copy_amount;
     };
@@ -522,7 +533,9 @@ void MemoryManager::WriteBlockImpl(GPUVAddr gpu_dest_addr, const void* src_buffe
         GPUVAddr base = (page_index << big_page_bits) + offset;
         MemoryOperation(base, copy_amount, false, mapped_normal, just_advance, just_advance);
     };
+    VideoCommon::LoadingProbe::MarkWriteback("enumerate write pages", size);
     MemoryOperation(gpu_dest_addr, size, true, mapped_big, just_advance, write_short_pages);
+    VideoCommon::LoadingProbe::MarkWriteback("write block done", gpu_dest_addr);
 }
 
 void MemoryManager::WriteBlock(GPUVAddr gpu_dest_addr, const void* src_buffer, std::size_t size, VideoCommon::CacheType which) {
@@ -641,17 +654,23 @@ void MemoryManager::InvalidateRegion(GPUVAddr gpu_addr, size_t size,
 
     auto mapped_normal = [&](std::size_t page_index, std::size_t offset, std::size_t copy_amount) {
         const DAddr dev_addr_base = (DAddr(page_table[page_index]) << cpu_page_bits) + offset;
+        VideoCommon::LoadingProbe::MarkWriteback("span invalidate", dev_addr_base);
         rasterizer->InvalidateRegion(dev_addr_base, copy_amount, which);
+        VideoCommon::LoadingProbe::MarkWriteback("span invalidate done", dev_addr_base);
     };
     auto mapped_big = [&](std::size_t page_index, std::size_t offset, std::size_t copy_amount) {
         const DAddr dev_addr_base = (DAddr(big_page_table_dev[page_index]) << cpu_page_bits) + offset;
+        VideoCommon::LoadingProbe::MarkWriteback("span invalidate", dev_addr_base);
         rasterizer->InvalidateRegion(dev_addr_base, copy_amount, which);
+        VideoCommon::LoadingProbe::MarkWriteback("span invalidate done", dev_addr_base);
     };
     auto invalidate_short_pages = [&](std::size_t page_index, std::size_t offset, std::size_t copy_amount) {
         GPUVAddr base = (page_index << big_page_bits) + offset;
         MemoryOperation(base, copy_amount, false, mapped_normal, do_nothing, do_nothing);
     };
+    VideoCommon::LoadingProbe::MarkWriteback("enumerate invalidate pages", size);
     MemoryOperation(gpu_addr, size, true, mapped_big, do_nothing, invalidate_short_pages);
+    VideoCommon::LoadingProbe::MarkWriteback("invalidate pages done", gpu_addr);
 }
 
 void MemoryManager::CopyBlock(GPUVAddr gpu_dest_addr, GPUVAddr gpu_src_addr, std::size_t size,

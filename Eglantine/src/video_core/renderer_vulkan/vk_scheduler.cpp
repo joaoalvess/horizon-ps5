@@ -1,3 +1,6 @@
+#include <atomic>
+#include "common/cpu_features.h"
+#include "video_core/nx2_loading_probe.h"
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -27,6 +30,15 @@
 #include "video_core/vulkan_common/vulkan_wrapper.h"
 
 namespace Vulkan {
+
+std::atomic<u64> mkw_worker_wait_ns{}, mkw_worker_wait_calls{};
+struct MkwWorkerTimer {
+    std::chrono::nanoseconds start = Common::g_wall_clock.GetTimeNS();
+    ~MkwWorkerTimer() {
+        mkw_worker_wait_ns.fetch_add((Common::g_wall_clock.GetTimeNS() - start).count(), std::memory_order_relaxed);
+        mkw_worker_wait_calls.fetch_add(1, std::memory_order_relaxed);
+    }
+};
 
 void Scheduler::CommandChunk::ExecuteAll(vk::CommandBuffer cmdbuf,
                                          vk::CommandBuffer upload_cmdbuf) {
@@ -79,16 +91,21 @@ void Scheduler::Finish(VkSemaphore signal_semaphore, VkSemaphore wait_semaphore)
 }
 
 void Scheduler::WaitWorker() {
+    MkwWorkerTimer mkw_timer;
+    VideoCommon::LoadingProbe::gpu.Mark("WaitWorker dispatch");
     DispatchWork();
 
     // Ensure the queue is drained.
     {
         std::unique_lock ql{queue_mutex};
+        VideoCommon::LoadingProbe::gpu.Mark("WaitWorker queue");
         event_cv.wait(ql, [this] { return work_queue.empty(); });
     }
 
     // Now wait for execution to finish.
+    VideoCommon::LoadingProbe::gpu.Mark("WaitWorker execution");
     std::scoped_lock el{execution_mutex};
+    VideoCommon::LoadingProbe::gpu.Mark("WaitWorker done");
 }
 
 void Scheduler::DispatchWork() {
@@ -367,7 +384,7 @@ u64 Scheduler::SubmitExecution(VkSemaphore signal_semaphore, VkSemaphore wait_se
 
     const u64 signal_value = master_semaphore->NextTick();
     RecordWithUploadBuffer([signal_semaphore, wait_semaphore, signal_value,
-                            this](vk::CommandBuffer cmdbuf, vk::CommandBuffer upload_cmdbuf) {
+                            host_visibility = host_readback_visibility, this](vk::CommandBuffer cmdbuf, vk::CommandBuffer upload_cmdbuf) {
         static constexpr VkMemoryBarrier WRITE_BARRIER{
             .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
             .pNext = nullptr,
@@ -376,6 +393,16 @@ u64 Scheduler::SubmitExecution(VkSemaphore signal_semaphore, VkSemaphore wait_se
         };
         upload_cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, WRITE_BARRIER);
         upload_cmdbuf.End();
+        if (host_visibility) {
+            const VkMemoryBarrier host_barrier{
+                .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                .pNext = nullptr,
+                .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT,
+                .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+            };
+            cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                                  VK_PIPELINE_STAGE_HOST_BIT, 0, host_barrier);
+        }
         cmdbuf.End();
 
         if (on_submit) {

@@ -164,6 +164,18 @@ class TextureCache : public VideoCommon::ChannelSetupCaches<TextureCacheChannelI
     /// Records the layers a write of [cpu_addr, +size) touches.
     void MarkLayersWritten(Image& image, DAddr cpu_addr, size_t size);
 
+    /// SparseTiles images: notes a written range, uploaded with the next refresh.
+    void MarkRangeWritten(Image& image, DAddr cpu_addr, size_t size);
+
+    /// SparseTiles images: binds and uploads the parts written since the last upload.
+    void RefreshSparseTiles(Image& image);
+
+    /// Image::BindTiles, counting what it binds in total_used_memory.
+    bool BindSparseTiles(Image& image, std::span<const LevelRect> rects,
+                         std::vector<LevelRect>& pending_uploads);
+
+    void PrepareSparseTilesForWrite(Image& image);
+
     /// Uploads the image's dirty layers. False when it needs a full upload instead.
     bool UploadWrittenLayers(Image& image);
 
@@ -210,7 +222,7 @@ public:
     [[nodiscard]] ImageView& GetImageView(u32 index) noexcept;
 
     /// Mark an image as modified from the GPU
-    void MarkModification(ImageId id) noexcept;
+    void MarkModification(ImageId id);
 
     /// Fill image_view_ids with the graphics/compute images in indices
     void FillImageViews(std::span<ImageViewInOut> views, bool compute, bool blacklist = true);
@@ -250,6 +262,14 @@ public:
 
     /// Download contents of host images to guest memory in a region
     void DownloadMemory(DAddr cpu_addr, size_t size);
+
+    bool HasPartialDownloads() const noexcept {
+        return partial_downloads_seen.load(std::memory_order_acquire);
+    }
+    // Caller holds mutex. Request full ordered completion before stores or new aliases.
+    std::vector<std::pair<DAddr, u64>> RequestPartialDownloadCompletion(
+        DAddr cpu_addr, u64 size, const ImageBase* except = nullptr);
+
 
     std::optional<VideoCore::RasterizerDownloadArea> GetFlushArea(DAddr cpu_addr, u64 size);
 
@@ -433,6 +453,8 @@ private:
 
     /// Uploads a large plain 2D image in chunks; false if it does not qualify.
     bool UploadInChunks(Image& image);
+    bool UploadLayerChunks(Image& image, std::span<const u32> layers, const char* context);
+    void UploadSparseRects(Image& image, std::span<const LevelRect> rects);
 
     /// Records a GPU remap of a small part of a large 2D image for a partial re-upload instead of
     /// marking the whole image remapped (which replaces it). False if the image does not qualify.
@@ -457,7 +479,10 @@ private:
     void RemoveFramebuffers(std::span<const ImageViewId> removed_views);
 
     /// Mark an image as modified from the GPU
-    void MarkModification(ImageBase& image) noexcept;
+    // GPU owner only; completes CPU backing before a newer overlapping GPU owner exists.
+    void CompletePartialDownloads(DAddr address, u64 size, const ImageBase* except = nullptr);
+    void CompleteAllPartialDownloads();
+    void MarkModification(ImageBase& image);
 
     /// Synchronize image aliases, copying data if needed
     void SynchronizeAliases(ImageId image_id);
@@ -581,6 +606,8 @@ private:
     Common::ScratchBuffer<u8> unswizzle_data_buffer;
 
     u64 modification_tick = 0;
+    std::atomic<bool> partial_downloads_seen{false};
+    std::vector<ImageId> partial_download_images;
     u64 frame_tick = 0;
 
     Common::ThreadWorker texture_decode_worker{1, "TextureDecoder", {},

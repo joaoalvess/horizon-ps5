@@ -18,6 +18,13 @@
 
 namespace Vulkan::vk {
 
+VkDeviceSize Image::AllocationBytesProbe() const noexcept {
+    if (handle == VK_NULL_HANDLE || allocation == VK_NULL_HANDLE) return 0;
+    VmaAllocationInfo info{};
+    vmaGetAllocationInfo(allocator, allocation, &info);
+    return info.size;
+}
+
 namespace {
 
 template <typename Func>
@@ -116,6 +123,7 @@ void Load(VkDevice device, DeviceDispatch& dld) noexcept {
     X(vkCmdDrawIndirectCount);
     X(vkCmdDrawIndexedIndirectCount);
     X(vkCmdDrawIndirectByteCountEXT);
+    X(vkCmdDrawMeshTasksEXT);
     X(vkCmdEndConditionalRenderingEXT);
     X(vkCmdEndQuery);
     X(vkCmdEndRenderPass);
@@ -526,6 +534,23 @@ void Image::Release() const noexcept {
     }
 }
 
+std::span<const u8> Buffer::TryMapForReadback(size_t size) {
+    if (!handle || !allocation || !size) return {};
+    if (!mapped.empty()) return mapped.size() >= size ? mapped.first(size) : std::span<const u8>{};
+    VkMemoryPropertyFlags properties{};
+    vmaGetAllocationMemoryProperties(allocator, allocation, &properties);
+    if (!(properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) return {};
+    VmaAllocationInfo info{};
+    vmaGetAllocationInfo(allocator, allocation, &info);
+    if (size > info.size) return {};
+    void* pointer{};
+    if (vmaMapMemory(allocator, allocation, &pointer) != VK_SUCCESS) return {};
+    if (!pointer) { vmaUnmapMemory(allocator, allocation); return {}; }
+    mapped = {static_cast<u8*>(pointer), size};
+    readback_mapping = true;
+    return mapped;
+}
+
 void Buffer::Flush() const {
     if (!is_coherent) {
         vmaFlushAllocation(allocator, allocation, 0, VK_WHOLE_SIZE);
@@ -544,6 +569,7 @@ void Buffer::SetObjectNameEXT(const char* name) const {
 
 void Buffer::Release() const noexcept {
     if (handle) {
+        if (readback_mapping) vmaUnmapMemory(allocator, allocation);
         vmaDestroyBuffer(allocator, handle, allocation);
     }
 }

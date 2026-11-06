@@ -1,3 +1,4 @@
+#include "video_core/nx2_loading_probe.h"
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -310,6 +311,14 @@ Shader::RuntimeInfo MakeRuntimeInfo(std::span<const Shader::IR::Program> program
     } else {
         info.previous_stage_stores.mask.set();
     }
+    if (previous_program && previous_program->stage == Shader::Stage::Mesh) {
+        for (const u32 line : previous_program->mesh.primitive_lines) {
+            const auto attribute{static_cast<Shader::IR::Attribute>(line)};
+            if (Shader::IR::IsGeneric(attribute)) {
+                info.per_primitive_generics.set(Shader::IR::GenericAttributeIndex(attribute));
+            }
+        }
+    }
     const Shader::Stage stage{program.stage};
     const bool has_geometry{key.unique_hashes[4] != 0 && !programs[4].is_geometry_passthrough};
     const float point_size{std::bit_cast<float>(key.point_size)};
@@ -328,6 +337,9 @@ Shader::RuntimeInfo MakeRuntimeInfo(std::span<const Shader::IR::Program> program
         info.tess_clockwise = key.tess_clockwise;
         info.tess_primitive = key.tess_primitive;
         info.tess_spacing = key.tess_spacing;
+        break;
+    case Shader::Stage::Mesh:
+        info.convert_depth_mode = key.convert_depth_mode;
         break;
     case Shader::Stage::Geometry:
         if (program.output_topology == Shader::OutputTopology::PointList) {
@@ -459,7 +471,9 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
                            Shader::Stage::TessellationEval) |
         subgroup_stage_bit(VK_SHADER_STAGE_GEOMETRY_BIT, Shader::Stage::Geometry) |
         subgroup_stage_bit(VK_SHADER_STAGE_FRAGMENT_BIT, Shader::Stage::Fragment) |
-        subgroup_stage_bit(VK_SHADER_STAGE_COMPUTE_BIT, Shader::Stage::Compute)};
+        subgroup_stage_bit(VK_SHADER_STAGE_COMPUTE_BIT, Shader::Stage::Compute) |
+        subgroup_stage_bit(VK_SHADER_STAGE_TASK_BIT_EXT, Shader::Stage::Task) |
+        subgroup_stage_bit(VK_SHADER_STAGE_MESH_BIT_EXT, Shader::Stage::Mesh)};
     if (driver_id == VK_DRIVER_ID_MESA_TURNIP) {
         supported_subgroup_stages &= ~(1u << static_cast<u32>(Shader::Stage::Geometry));
     }
@@ -655,11 +669,14 @@ PipelineCache::~PipelineCache() {
 }
 
 GraphicsPipeline* PipelineCache::CurrentGraphicsPipeline() {
+    VideoCommon::LoadingProbe::gpu.Mark("pipeline refresh");
     if (!RefreshStages(graphics_key.unique_hashes)) {
         current_pipeline = nullptr;
         return nullptr;
     }
+    VideoCommon::LoadingProbe::gpu.Mark("pipeline state");
     graphics_key.state.Refresh(*maxwell3d, dynamic_features);
+    VideoCommon::LoadingProbe::gpu.Mark("pipeline lookup");
 
     if (current_pipeline) {
         GraphicsPipeline* const next{current_pipeline->Next(graphics_key)};
@@ -761,6 +778,15 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
     const auto load_graphics{[&](std::ifstream& file, std::vector<FileEnvironment> envs) {
         GraphicsPipelineCacheKey key;
         file.read(reinterpret_cast<char*>(&key), sizeof(key));
+
+        // Task/mesh pipelines are not stored (their mesh registers are not in the format); skip
+        // any that were.
+        if (std::ranges::any_of(envs, [](const FileEnvironment& env) {
+                return env.ShaderStage() == Shader::Stage::Task ||
+                       env.ShaderStage() == Shader::Stage::Mesh;
+            })) {
+            return;
+        }
 
         if ((key.state.extended_dynamic_state != 0) !=
                 dynamic_features.has_extended_dynamic_state ||
@@ -1088,7 +1114,9 @@ std::shared_ptr<ReusableShaders> PipelineCache::BuildGraphicsShaders(
         ++env_index;
 
         const u32 cfg_offset{static_cast<u32>(env.StartAddress() + sizeof(Shader::ProgramHeader))};
+        VideoCommon::LoadingProbe::compiler.Mark("CFG", key.unique_hashes[index]);
         Shader::Maxwell::Flow::CFG cfg(env, pools.flow_block, cfg_offset, index == 0);
+        VideoCommon::LoadingProbe::compiler.Mark("translate", key.unique_hashes[index]);
         if (!uses_vertex_a || index != 1) {
             // Normal path
             programs[index] = TranslateProgram(pools.inst, pools.block, env, cfg, host_info);
@@ -1130,11 +1158,15 @@ std::shared_ptr<ReusableShaders> PipelineCache::BuildGraphicsShaders(
         const size_t stage_index{index - 1};
         infos[stage_index] = &program.info;
 
+        VideoCommon::LoadingProbe::compiler.Mark("runtime", key.unique_hashes[index]);
         const auto runtime_info{MakeRuntimeInfo(programs, key, program, previous_stage)};
         ConvertLegacyToGeneric(program, runtime_info);
+        VideoCommon::LoadingProbe::compiler.Mark("SPIRV", key.unique_hashes[index]);
         const std::vector<u32> code{EmitSPIRV(profile, runtime_info, program, binding)};
         device.SaveShader(code);
+        VideoCommon::LoadingProbe::compiler.Mark("module", key.unique_hashes[index]);
         (*modules)[stage_index] = BuildShader(device, code);
+        VideoCommon::LoadingProbe::compiler.Mark("done", key.unique_hashes[index]);
 
         // Text log + .spv dump. Text log is gated by gpu_log_level != Off; .spv dump
         // is independent and gated only by gpu_log_shader_dumps.
@@ -1305,6 +1337,13 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipelineFromReuse
 
 void PipelineCache::SerializeGraphicsPipeline(const GraphicsPipelineCacheKey& key,
                                               GraphicsEnvironmentArray envs) {
+    // The environment cache format does not carry the native task/mesh registers.
+    if (std::ranges::any_of(envs, [](const GenericEnvironment& env) {
+            return env.ShaderStage() == Shader::Stage::Task ||
+                   env.ShaderStage() == Shader::Stage::Mesh;
+        })) {
+        return;
+    }
     serialization_thread.QueueWork([this, key, envs = std::move(envs)] {
         boost::container::static_vector<const GenericEnvironment*, Maxwell::MaxShaderProgram>
             env_ptrs;

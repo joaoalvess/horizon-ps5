@@ -1,3 +1,4 @@
+#include "video_core/readback_dependency_diagnostics.h"
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -43,6 +44,9 @@
 #include "video_core/host1x/host1x.h"
 #include "video_core/nx2.h"
 #include "video_core/rasterizer_download_area.h"
+
+extern "C" bool eden_published_semaphore_reads_enabled() __attribute__((weak));
+extern "C" void eden_published_semaphore_read_hit() __attribute__((weak));
 
 namespace Core::Memory {
 
@@ -735,6 +739,49 @@ struct Memory::Impl {
             GetInteger(vaddr), []() {}, []() {});
     }
 
+    std::optional<u32> TryPublishedSemaphoreRead(u64 address) {
+        static const bool enabled = [] {
+            const char* value = std::getenv("EDEN_NX2_PUBLISHED_SEMAPHORE_READS");
+            return value && std::strcmp(value, "1") == 0;
+        }();
+        if (!enabled || (address & 3) ||
+            !Tegra::g_nx2_ampere.load(std::memory_order_relaxed) ||
+            !Settings::IsGPULevelHigh() ||
+            system.GetCurrentHostThreadID() >= Core::Hardware::NUM_CPU_CORES ||
+            (eden_published_semaphore_reads_enabled && !eden_published_semaphore_reads_enabled()))
+            return {};
+        const auto registered = [&] {
+            for (const auto& entry : Tegra::g_nx2_semaphore_regions) {
+                const auto start = entry.load(std::memory_order_acquire);
+                if (start && address >= start && address - start <= 0x2000 - sizeof(u32))
+                    return true;
+            }
+            return false;
+        };
+        if (!registered()) return {};
+        const auto* pointer = GetPointerImpl(address, [] {}, [] {});
+        if (!pointer) return {};
+        auto& device = system.Host1x().MemoryManager();
+        const auto mapping = device.MappingGeneration();
+        DAddr resolved{};
+        size_t aliases{};
+        thread_local Common::ScratchBuffer<u32> scratch;
+        device.ApplyOpOnPointer(pointer, scratch, [&](DAddr candidate) {
+            ++aliases;
+            if (candidate && (candidate & YUZU_PAGEMASK) == (address & YUZU_PAGEMASK) &&
+                device.GetPointer<u8>(candidate) == pointer) resolved = candidate;
+        });
+        if (aliases != 1 || !resolved) return {};
+        const auto value = system.GPU().ReadPublishedSemaphore(resolved, pointer);
+        if (!value || device.MappingGeneration() != mapping || !registered() ||
+            GetPointerImpl(address, [] {}, [] {}) != pointer ||
+            device.GetPointer<u8>(resolved) != pointer) return {};
+        // This value satisfies only this scalar load. Do not disarm the page's
+        // read traps or create a whole-page readback certificate.
+        if (eden_published_semaphore_read_hit) eden_published_semaphore_read_hit();
+        return value;
+    }
+
     /// @brief Reads a particular data type out of memory at the given virtual address.
     /// @param vaddr The virtual address to read the data type from.
     /// @tparam T The data type to read out of memory.
@@ -742,6 +789,7 @@ struct Memory::Impl {
     template <typename T>
     inline T Read(Common::ProcessAddress vaddr) noexcept requires(std::is_trivially_copyable_v<T>) {
         const u64 addr = GetInteger(vaddr);
+        std::optional<u32> published;
         if (auto const ptr = GetPointerImpl(addr, [addr]() {
             // A guest spinning on a bad pointer reads unmapped memory tens of thousands of times
             // a second: keep the first ones and then a sample.
@@ -751,8 +799,19 @@ struct Memory::Impl {
             }
             ++UnmappedReadFlag();
         }, [&]() {
+            if constexpr (sizeof(T) == sizeof(u32)) {
+                published = TryPublishedSemaphoreRead(addr);
+                if (published) return;
+            }
             HandleRasterizerDownload(addr, sizeof(T), ReadbackDiagnostics::Caller::ScalarRead);
         }); ptr) [[likely]] {
+            if constexpr (sizeof(T) == sizeof(u32)) {
+                if (published) {
+                    T value{};
+                    std::memcpy(&value, &*published, sizeof(value));
+                    return value;
+                }
+            }
             // It may be tempting to rewrite this particular section to use "reinterpret_cast";
             // afterall, it's trivially copyable so surely it can be copied ov- Alignment.
             // Remember, alignment. memcpy() will deal with all the alignment extremely fast.
@@ -806,9 +865,14 @@ struct Memory::Impl {
 
     void HandleRasterizerDownload(VAddr v_address, size_t size, ReadbackDiagnostics::Caller caller) {
         ReadbackDiagnostics::Scope diagnostics{caller, size};
-        using ReadbackDiagnostics::Event;
         const auto* p = GetPointerImpl(
             v_address, []() {}, []() {});
+        const auto ordered_read = [&](DAddr address, u64 bytes) {
+            VideoCommon::ReadbackDependencyDiagnostics::CallerScope trace{
+                static_cast<u64>(caller) + 1, static_cast<u64>(v_address), size, p};
+            return system.GPU().OnCPURead(address, bytes);
+        };
+        using ReadbackDiagnostics::Event;
         auto& gpu_device_memory = system.Host1x().MemoryManager();
         const size_t core = system.GetCurrentHostThreadID();
         diagnostics.BindCore(core);
@@ -857,7 +921,7 @@ struct Memory::Impl {
                     host_read_cache.Invalidate();
                     diagnostics.Add(Event::HostMiss);
                     diagnostics.Add(Event::GpuPage);
-                    const auto area = gpu.OnCPURead(page.device_page, YUZU_PAGESIZE);
+                    const auto area = ordered_read(page.device_page, YUZU_PAGESIZE);
                     const auto [current_page, current_aliases] = resolve_page(
                         GetPointerImpl(v_address, []() {}, []() {}), read_traps.Generation());
                     const u64 completed_generation = gpu.ReadbackGeneration();
@@ -886,7 +950,7 @@ struct Memory::Impl {
             gpu_device_memory.ApplyOpOnPointer(p, host_thread_scratch, [&](DAddr address) {
                 diagnostics.AddAlias();
                 diagnostics.Add(Event::GpuFallback);
-                static_cast<void>(gpu.OnCPURead(address, size));
+                static_cast<void>(ordered_read(address, size));
             });
             DisarmReadTraps(v_address, size, generation);
             return;
@@ -909,8 +973,7 @@ struct Memory::Impl {
             const auto capture_shadow = [&] {
                 CoreReadbackShadow::Snapshot snapshot;
                 const u64 offset = v_address & YUZU_PAGEMASK;
-                if (!Tegra::g_nx2_ampere.load(std::memory_order_relaxed) ||
-                    !current_page_table->fastmem_arena || p == nullptr ||
+                if (!Tegra::g_nx2_ampere.load(std::memory_order_relaxed) || p == nullptr ||
                     !HostReadbackCache::FitsInPage(offset, size)) {
                     return snapshot;
                 }
@@ -973,7 +1036,11 @@ struct Memory::Impl {
                 }
             }
             diagnostics.Add(Event::GpuCore);
-            current_area = system.GPU().OnCPURead(address, size);
+            const auto ordered = CoreReadbackCache::Enabled()
+                ? CoreReadbackCache::OrderedRange(shadow_before.page, shadow_before.aliases,
+                                                  address, size)
+                : CoreReadbackCache::ReadRange{address, size};
+            current_area = ordered_read(ordered.address, ordered.size);
             if (CoreReadbackCache::Enabled() || CoreReadbackShadow::Enabled() || capacity) {
                 const auto current = capture_shadow();
                 if (capacity) {

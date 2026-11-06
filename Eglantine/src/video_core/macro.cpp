@@ -1,3 +1,4 @@
+#include "video_core/nx2_loading_probe.h"
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -1403,6 +1404,8 @@ YUZU_NO_INLINE void MacroEngine::ReadNativeMemory(Engines::Maxwell3D& maxwell3d,
 
 void MacroEngine::Execute(Core::System& system, Engines::Maxwell3D& maxwell3d, u32 method,
                           std::span<const u32> parameters) {
+    VideoCommon::LoadingProbe::gpu.Mark("macro enter", method);
+    SCOPE_EXIT { VideoCommon::LoadingProbe::gpu.Mark("macro leave", method); };
     VideoCommon::Nx2Profile::Scope profile_scope{VideoCommon::Nx2Profile::Zone::Macro};
     if (native_turing) {
         maxwell3d.RefreshParameters();

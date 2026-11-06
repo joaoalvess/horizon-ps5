@@ -1,3 +1,4 @@
+#include "video_core/nx2_loading_probe.h"
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -208,12 +209,16 @@ void DeviceMemoryManager<Traits>::Map(DAddr address, VAddr virtual_address, size
     Core::Memory::Memory* process_memory = registered_processes[asid.id];
     size_t start_page_d = address >> Memory::YUZU_PAGEBITS;
     size_t num_pages = Common::AlignUp(size, Memory::YUZU_PAGESIZE) >> Memory::YUZU_PAGEBITS;
+    VideoCommon::LoadingProbe::MarkWriteback("lock device mappings", address);
     std::scoped_lock lk(mapping_guard);
+    VideoCommon::LoadingProbe::MarkWriteback("commit device entries", num_pages);
 
     tracked_entries.CommitRegion(start_page_d, start_page_d + num_pages);
+    VideoCommon::LoadingProbe::MarkWriteback("cut previous device continuity", address);
     CutContinuityAt(start_page_d);
     for (size_t i = 0; i < num_pages; i++) {
         const VAddr new_vaddress = virtual_address + i * Memory::YUZU_PAGESIZE;
+        VideoCommon::LoadingProbe::MarkWriteback("device backing pointer", new_vaddress);
         auto* ptr = process_memory->GetPointerSilent(Common::ProcessAddress(new_vaddress));
         // One page per run unless tracked below: a run left from an earlier mapping of these
         // device pages would make WalkBlock copy the host memory that followed that mapping.
@@ -224,7 +229,9 @@ void DeviceMemoryManager<Traits>::Map(DAddr address, VAddr virtual_address, size
         }
         auto phys_addr = static_cast<u32>(GetRawPhysicalAddr(ptr) >> Memory::YUZU_PAGEBITS) + 1U;
         tracked_entries.GetUnchecked(start_page_d + i).compressed_physical_ptr = phys_addr;
+        VideoCommon::LoadingProbe::MarkWriteback("insert CPU backing", new_vaddress);
         InsertCPUBacking(start_page_d + i, new_vaddress, asid);
+        VideoCommon::LoadingProbe::MarkWriteback("device reverse mapping", new_vaddress);
         const u32 base_dev = compressed_device_addr[phys_addr - 1U];
         const u32 new_dev = static_cast<u32>(start_page_d + i);
         if (base_dev == 0) [[likely]] {
@@ -236,10 +243,14 @@ void DeviceMemoryManager<Traits>::Map(DAddr address, VAddr virtual_address, size
             start_id = impl->multi_dev_address.Register(base_dev);
             compressed_device_addr.GetAndFault(phys_addr - 1U) = MULTI_FLAG | start_id;
         }
+        VideoCommon::LoadingProbe::MarkWriteback("register device alias", new_dev);
         impl->multi_dev_address.Register(new_dev, start_id);
+        VideoCommon::LoadingProbe::MarkWriteback("device alias registered", new_dev);
     }
+    VideoCommon::LoadingProbe::MarkWriteback("device pages mapped", num_pages);
     translation_generation.fetch_add(1, std::memory_order_release);
     if (track) {
+        VideoCommon::LoadingProbe::MarkWriteback("track device continuity", address);
         TrackContinuityImpl(address, virtual_address, size, asid);
     }
 }

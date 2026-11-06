@@ -575,6 +575,10 @@ u64 GPU::ReadbackGeneration() const {
     return impl->gpu_thread.ReadbackGeneration();
 }
 
+std::optional<u32> GPU::ReadPublishedSemaphore(DAddr addr, const void* pointer) {
+    return impl->renderer->ReadRasterizer()->ReadPublishedSemaphore(addr, pointer);
+}
+
 void GPU::InvalidateReadbackCache() {
     impl->gpu_thread.InvalidateReadbackCache();
 }

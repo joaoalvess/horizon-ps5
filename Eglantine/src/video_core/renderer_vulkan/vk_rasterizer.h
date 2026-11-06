@@ -95,6 +95,7 @@ public:
     void Query(GPUVAddr gpu_addr, VideoCommon::QueryType type,
                VideoCommon::QueryPropertiesFlags flags, u32 payload, u32 subreport) override;
     std::optional<u32> PendingSemaphoreRelease(DAddr addr) override;
+    std::optional<u32> ReadPublishedSemaphore(DAddr addr, const void* pointer) override;
     void BindGraphicsUniformBuffer(size_t stage, u32 index, GPUVAddr gpu_addr, u32 size) override;
     void DisableGraphicsUniformBuffer(size_t stage, u32 index) override;
     void FlushAll() override;
@@ -232,6 +233,7 @@ private:
     boost::container::static_vector<VkSampler, MAX_TEXTURES> sampler_handles;
 
     u32 draw_counter = 0;
+    bool mesh_draw{}; ///< the draw being prepared uses a task/mesh pipeline
 };
 
 } // namespace Vulkan

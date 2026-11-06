@@ -7,6 +7,8 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
+#include <cstdio>
 #include <memory>
 #include <numeric>
 #include <stdexcept>
@@ -20,6 +22,7 @@
 #include "video_core/nx2.h"
 #include "video_core/nx2_profile.h"
 #include "video_core/cache_tracking_diagnostics.h"
+#include "video_core/readback_dependency_diagnostics.h"
 #include "video_core/texture_cache/util.h"
 
 namespace VideoCommon {
@@ -161,6 +164,8 @@ void BufferCache<P>::TickFrame() {
 
 template <class P>
 void BufferCache<P>::UnmapGPUMemory(size_t as_id, GPUVAddr gpu_addr, size_t size) {
+    if constexpr (requires { runtime.InvalidateAllReadback(); }) runtime.InvalidateAllReadback();
+
     if constexpr (requires { runtime.BindMultiRangeStorageBuffer(u64{}, bool{}); }) {
         virtual_ranges.Unmap(as_id, gpu_addr, size);
     }
@@ -168,6 +173,13 @@ void BufferCache<P>::UnmapGPUMemory(size_t as_id, GPUVAddr gpu_addr, size_t size
 
 template <class P>
 void BufferCache<P>::WriteMemory(DAddr device_addr, u64 size) {
+    if constexpr (requires { runtime.ReadbackTrackingEnabled(); }) {
+        if (runtime.ReadbackTrackingEnabled())
+            ForEachBufferInRange(device_addr, size, [&](BufferId, Buffer& buffer) {
+                runtime.InvalidateReadback(buffer);
+            });
+    }
+
     CacheTrackingDiagnostics::Record(CacheTrackingDiagnostics::Event::BufferCpuMark,
                                       device_addr, size);
     if (IsRegionGpuModified(device_addr, size)) {
@@ -369,6 +381,8 @@ std::pair<typename P::Buffer*, u32> BufferCache<P>::ObtainCPUBuffer(
         MarkWrittenBuffer(buffer_id, device_addr, size);
         break;
     case ObtainBufferOperation::DiscardWrite: {
+        if constexpr (requires { runtime.InvalidateReadback(buffer); }) runtime.InvalidateReadback(buffer);
+
         ClearDownload(device_addr, size);
         gpu_modified_ranges.Subtract(device_addr, size);
         break;
@@ -731,6 +745,8 @@ void BufferCache<P>::CommitAsyncFlushesHigh() {
         async_downloads.Add(orig_device_addr, copy.size);
         buffer.MarkUsage(copy.src_offset, copy.size);
         runtime.CopyBuffer(download_staging.buffer, buffer, copies, false);
+        ReadbackDependencyDiagnostics::BufferCopySource(runtime, buffer, copy.src_offset, copy.size, true);
+        ReadbackDependencyDiagnostics::BufferCopyBytes(copy.size, 0);
         normalized_copies.push_back(second_copy);
     }
     runtime.PostCopyBarrier();
@@ -768,6 +784,7 @@ void BufferCache<P>::PopAsyncBuffers() {
         async_downloads.ForEachInRange(device_addr, copy.size, [&](DAddr start, DAddr end, s32) {
             device_memory.WriteBlockUnsafe(start, &read_mapped_memory[start - device_addr],
                                            end - start);
+            ReadbackDependencyDiagnostics::BufferCopyBytes(0, end - start);
         });
         async_downloads.Subtract(device_addr, copy.size, [&](DAddr start, DAddr end) {
             if (uncommitted_gpu_modified_ranges.Intersects(start, end - start) ||
@@ -1446,6 +1463,15 @@ void BufferCache<P>::UpdateIndexBuffer() {
     const u32 address_size = static_cast<u32>(gpu_addr_end - gpu_addr_begin);
     const u32 draw_size = (index_buffer_ref.count + index_buffer_ref.first) * u32(index_buffer_ref.FormatSizeInBytes());
     const u32 size = (std::min)(address_size, draw_size);
+    if (size >= 16_MiB) {
+        static std::atomic<unsigned> samples{0};
+        if (samples.fetch_add(1, std::memory_order_relaxed) < 64) {
+            std::fprintf(stderr, "MKW_INDEX_SPAN begin=%llx end=%llx device=%llx first=%u count=%u element=%u address_size=%u draw_size=%u chosen=%u\n",
+                static_cast<unsigned long long>(gpu_addr_begin), static_cast<unsigned long long>(gpu_addr_end),
+                static_cast<unsigned long long>(device_addr.value_or(0)), index_buffer_ref.first, index_buffer_ref.count,
+                unsigned(index_buffer_ref.FormatSizeInBytes()), address_size, draw_size, size);
+        }
+    }
     if (size == 0 || !device_addr) {
         channel_state->index_buffer = NULL_BINDING;
         return;
@@ -1632,6 +1658,11 @@ void BufferCache<P>::UpdateComputeTextureBuffers() {
 
 template <class P>
 void BufferCache<P>::MarkWrittenBuffer(BufferId buffer_id, DAddr device_addr, u32 size, bool needs_sync) {
+    if constexpr (requires { runtime.NoteReadbackShaderWrite(slot_buffers[buffer_id], u64{}, u64{}); }) {
+        auto& buffer = slot_buffers[buffer_id];
+        runtime.NoteReadbackShaderWrite(buffer, buffer.Offset(device_addr), size);
+    }
+
     if constexpr (!IS_OPENGL) {
         if (needs_sync) {
             Buffer& buffer = slot_buffers[buffer_id];
@@ -1665,6 +1696,9 @@ BufferId BufferCache<P>::FindBuffer(DAddr device_addr, u32 size, bool sparse_com
                 if (sparse_compatible && !buffer.IsSparseCompatible()) {
                     usable = false;
                 }
+            }
+            if constexpr (requires { runtime.NeedsReadbackPromotion(buffer); }) {
+                if (usable && runtime.NeedsReadbackPromotion(buffer)) usable = false;
             }
             if (usable) {
                 return buffer_id;
@@ -1794,6 +1828,15 @@ BufferId BufferCache<P>::CreateBuffer(DAddr device_addr, u32 wanted_size,
     wanted_size = static_cast<u32>(device_addr_end - device_addr);
     const OverlapResult overlap = ResolveOverlaps(device_addr, wanted_size);
     const u32 size = static_cast<u32>(overlap.end - overlap.begin);
+    if (size >= 32_MiB) {
+        static std::atomic<unsigned> samples{0};
+        if (samples.fetch_add(1, std::memory_order_relaxed) < 64) {
+            std::fprintf(stderr, "MKW_BUFFER_MERGE requested_begin=%llx wanted=%u merged_begin=%llx merged_end=%llx size=%u overlaps=%zu leap=%d\n",
+                static_cast<unsigned long long>(device_addr), wanted_size,
+                static_cast<unsigned long long>(overlap.begin), static_cast<unsigned long long>(overlap.end),
+                size, overlap.ids.size(), int(overlap.has_stream_leap));
+        }
+    }
     const BufferId new_buffer_id =
         slot_buffers.insert(runtime, overlap.begin, size, sparse_compatible);
     auto& new_buffer = slot_buffers[new_buffer_id];
@@ -2023,6 +2066,7 @@ void BufferCache<P>::DownloadBuffersMemory(std::span<const BufferId> buffer_ids)
     struct Download {
         BufferId buffer_id;
         BufferCopy copy;
+        std::vector<u8> validation;
     };
     std::vector<Download> downloads;
     u64 total_size_bytes = 0;
@@ -2047,10 +2091,36 @@ void BufferCache<P>::DownloadBuffersMemory(std::span<const BufferId> buffer_ids)
     if (total_size_bytes == 0) {
         return;
     }
+    if constexpr (requires { runtime.TryMappedReadback(slot_buffers[BufferId{}], std::span<const BufferCopy>{}); }) {
+        std::erase_if(downloads, [&](Download& download) {
+            auto& buffer = slot_buffers[download.buffer_id];
+            const auto mapped = runtime.TryMappedReadback(buffer, std::span{&download.copy, 1});
+            if (mapped.empty()) return false;
+            const auto& copy = download.copy;
+            if (runtime.MappedReadbackMode() == 2) {
+                device_memory.WriteBlockUnsafe(buffer.CpuAddr() + copy.src_offset,
+                                               mapped.data() + copy.src_offset, copy.size);
+                ReadbackDependencyDiagnostics::BufferCopyBytes(0, copy.size);
+                runtime.RecordDirectReadback(copy.size);
+                return true;
+            }
+            download.validation.assign(mapped.begin() + copy.src_offset,
+                                       mapped.begin() + copy.src_offset + copy.size);
+            return false;
+        });
+        total_size_bytes = 0;
+        for (auto& download : downloads) {
+            download.copy.dst_offset = total_size_bytes;
+            total_size_bytes += Common::AlignUp(download.copy.size, 64);
+        }
+        if (downloads.empty()) return;
+    }
     auto download_staging = runtime.DownloadStagingBuffer(total_size_bytes);
     for (Download& download : downloads) {
         download.copy.dst_offset += download_staging.offset;
         Buffer& buffer = slot_buffers[download.buffer_id];
+        ReadbackDependencyDiagnostics::BufferCopyBytes(download.copy.size, 0);
+        ReadbackDependencyDiagnostics::BufferCopySource(runtime, buffer, download.copy.src_offset, download.copy.size, false);
         buffer.MarkUsage(download.copy.src_offset, download.copy.size);
         runtime.CopyBuffer(download_staging.buffer, buffer, std::span{&download.copy, 1}, true);
     }
@@ -2058,9 +2128,13 @@ void BufferCache<P>::DownloadBuffersMemory(std::span<const BufferId> buffer_ids)
     const u8* const mapped_memory = download_staging.mapped_span.data();
     for (const Download& download : downloads) {
         const DAddr device_addr = slot_buffers[download.buffer_id].CpuAddr() + download.copy.src_offset;
-        device_memory.WriteBlockUnsafe(
-            device_addr, mapped_memory + (download.copy.dst_offset - download_staging.offset),
-            download.copy.size);
+        const auto source = std::span{mapped_memory + (download.copy.dst_offset - download_staging.offset),
+                                      download.copy.size};
+        if constexpr (requires { runtime.ValidateMappedReadback(std::span<const u8>{}, std::span<const u8>{}); }) {
+            if (!download.validation.empty()) runtime.ValidateMappedReadback(download.validation, source);
+        }
+        device_memory.WriteBlockUnsafe(device_addr, source.data(), source.size());
+        ReadbackDependencyDiagnostics::BufferCopyBytes(0, download.copy.size);
     }
 }
 
@@ -2095,6 +2169,25 @@ void BufferCache<P>::DownloadBufferMemory(Buffer& buffer, DAddr device_addr, u64
         return;
     }
 
+    std::vector<u8> mapped_validation;
+    if constexpr (requires { runtime.TryMappedReadback(buffer, std::span<const BufferCopy>{}); }) {
+        const auto mapped = runtime.TryMappedReadback(buffer, copies);
+        if (!mapped.empty()) {
+            if (runtime.MappedReadbackMode() == 2) {
+                for (const auto& copy : copies) {
+                    device_memory.WriteBlockUnsafe(buffer.CpuAddr() + copy.src_offset,
+                                                   mapped.data() + copy.src_offset, copy.size);
+                    ReadbackDependencyDiagnostics::BufferCopyBytes(0, copy.size);
+                    runtime.RecordDirectReadback(copy.size);
+                }
+                return;
+            }
+            mapped_validation.resize(total_size_bytes);
+            for (const auto& copy : copies)
+                std::memcpy(mapped_validation.data() + copy.dst_offset,
+                            mapped.data() + copy.src_offset, copy.size);
+        }
+    }
     if constexpr (USE_MEMORY_MAPS) {
         auto download_staging = runtime.DownloadStagingBuffer(total_size_bytes);
         const u8* const mapped_memory = download_staging.mapped_span.data();
@@ -2102,6 +2195,8 @@ void BufferCache<P>::DownloadBufferMemory(Buffer& buffer, DAddr device_addr, u64
         for (BufferCopy& copy : copies) {
             // Modify copies to have the staging offset in mind
             copy.dst_offset += download_staging.offset;
+            ReadbackDependencyDiagnostics::BufferCopyBytes(copy.size, 0);
+            ReadbackDependencyDiagnostics::BufferCopySource(runtime, buffer, copy.src_offset, copy.size, false);
             buffer.MarkUsage(copy.src_offset, copy.size);
         }
         runtime.CopyBuffer(download_staging.buffer, buffer, copies_span, true);
@@ -2111,7 +2206,13 @@ void BufferCache<P>::DownloadBufferMemory(Buffer& buffer, DAddr device_addr, u64
             // Undo the modified offset
             const u64 dst_offset = copy.dst_offset - download_staging.offset;
             const u8* copy_mapped_memory = mapped_memory + dst_offset;
+            if constexpr (requires { runtime.ValidateMappedReadback(std::span<const u8>{}, std::span<const u8>{}); }) {
+                if (!mapped_validation.empty())
+                    runtime.ValidateMappedReadback({mapped_validation.data() + dst_offset, copy.size},
+                                                   {copy_mapped_memory, copy.size});
+            }
             device_memory.WriteBlockUnsafe(copy_device_addr, copy_mapped_memory, copy.size);
+            ReadbackDependencyDiagnostics::BufferCopyBytes(0, copy.size);
         }
     } else {
         const std::span<u8> immediate_buffer = ImmediateBuffer(largest_copy);

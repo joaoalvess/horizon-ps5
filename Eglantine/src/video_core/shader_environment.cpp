@@ -477,7 +477,7 @@ std::shared_ptr<const LoweredNativeCode> GenericEnvironment::LowerNativeCode(u32
         return offset;
     };
     if (static const char* const dump_directory = std::getenv("EDEN_NX2_SHADER_DUMP");
-        dump_directory != nullptr) {
+        dump_directory != nullptr && !lowered) {
         const auto folder = std::filesystem::path{dump_directory};
         const auto path = folder / fmt::format("{:016x}-{}-{:x}.bin", Shader::Ampere::NativeProgramKey(native),
                                                source_header_size == 0 ? "cs" : "gfx", program_base);
@@ -584,6 +584,13 @@ GraphicsEnvironment::GraphicsEnvironment(Tegra::Engines::Maxwell3D& maxwell3d_,
     gpu_memory->ReadBlock(program_base + start_address, &sph, sizeof(sph));
     initial_offset = sizeof(sph);
     texture_bound = maxwell3d->regs.bindless_texture_const_buffer_slot;
+    const auto& regs{maxwell3d->regs};
+    const bool native{maxwell3d->GetNativeMacroEngine().native_turing};
+    // Task and mesh programs: the task in the vertex slot, its mesh program in the tessellation
+    // slot (without a task, the mesh program is in the vertex slot).
+    const bool mesh_slot{native && regs.IsMeshEnabled() &&
+                         (program == Maxwell::ShaderType::VertexB ||
+                          program == Maxwell::ShaderType::Tessellation)};
     gp_passthrough_mask = maxwell3d->regs.post_vtg_shader_attrib_skip_mask;
     switch (program) {
     case Maxwell::ShaderType::VertexA:
@@ -614,9 +621,22 @@ GraphicsEnvironment::GraphicsEnvironment(Tegra::Engines::Maxwell3D& maxwell3d_,
         ASSERT_MSG(false, "Invalid program={}", program);
         break;
     }
+    if (mesh_slot) {
+        const bool has_task{regs.IsShaderConfigEnabled(Maxwell::ShaderType::Tessellation)};
+        stage = program == Maxwell::ShaderType::VertexB && has_task ? Shader::Stage::Task
+                                                                    : Shader::Stage::Mesh;
+        mesh_registers = {regs.reg_array[Maxwell::MeshShaderA], regs.reg_array[Maxwell::MeshShaderB],
+                          regs.reg_array[Maxwell::MeshInitShader]};
+        if (stage == Shader::Stage::Mesh && regs.IsShaderConfigEnabled(Maxwell::ShaderType::Geometry)) {
+            const auto& geometry{regs.pipelines[static_cast<size_t>(Maxwell::ShaderType::Geometry)]};
+            const GPUVAddr address{(static_cast<u64>(geometry.reserved[0] & 0xff) << 32) |
+                                   geometry.reserved[1]};
+            gpu_memory->ReadBlock(address, &mesh_primitive_header, sizeof(mesh_primitive_header));
+        }
+    }
     if (maxwell3d->GetNativeMacroEngine().native_turing) {
         if (program != Maxwell::ShaderType::VertexB && program != Maxwell::ShaderType::Geometry &&
-            program != Maxwell::ShaderType::Pixel) {
+            program != Maxwell::ShaderType::Pixel && !mesh_slot) {
             if (std::getenv("EDEN_NX2_SHADER_DUMP")) {
                 InitializeNativeCode(nullptr);
             }

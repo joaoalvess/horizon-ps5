@@ -27,6 +27,7 @@
 #include "video_core/host1x/syncpoint_manager.h"
 #include "video_core/nx2_profile.h"
 #include "video_core/rasterizer_interface.h"
+#include "video_core/readback_diagnostics.h"
 
 namespace VideoCommon {
 
@@ -85,8 +86,9 @@ public:
         if constexpr (!can_async_check) {
             TryReleasePendingFences<false>();
         }
-        auto [should_flush, committed_flushes] = CommitCacheFlushes();
+        auto [should_flush, committed_flushes, required_flushes] = CommitCacheFlushes();
         if (!delay_fence && committed_flushes == 0 && SkipEmptyFence()) {
+            ReadbackDiagnostics::CountFence(0, true);
             Nx2Profile::Scope skipped_scope{Nx2Profile::Zone::FenceSkipped};
             gpu.BeginAsyncGuestWrite();
             SCOPE_EXIT { gpu.EndAsyncGuestWrite(); };
@@ -95,7 +97,9 @@ public:
             return;
         }
         skipped_fences = 0;
-        should_flush |= query_cache.HasUncommittedFlushes();
+        const bool query_flush = query_cache.HasUncommittedFlushes();
+        should_flush |= query_flush;
+        ReadbackDiagnostics::CountFence(required_flushes | (query_flush ? 4 : 0));
         query_cache.CommitAsyncFlushes();
         TFence new_fence = CreateFence(!should_flush);
         if constexpr (can_async_check) {
@@ -330,6 +334,7 @@ private:
     struct CacheFlushes {
         bool should_flush;  ///< Downloads to wait for: the fence must reach the host GPU
         u8 committed;       ///< TextureFlushes, BufferFlushes: the caches that committed downloads
+        u8 required;        ///< The caches that requested device completion before committing
     };
 
     /// Commits the texture and buffer caches' downloads for a new fence (the query cache's are
@@ -343,6 +348,7 @@ private:
         {
             std::scoped_lock lock{texture_cache.mutex};
             flushes.should_flush = texture_cache.HasUncommittedFlushes();
+            if (flushes.should_flush) flushes.required |= TextureFlushes;
             if (texture_cache.HasAsyncFlushWork()) {
                 texture_cache.CommitAsyncFlushes();
                 flushes.committed |= TextureFlushes;
@@ -353,6 +359,7 @@ private:
             if (buffer_cache.HasUncommittedFlushes()) {
                 buffer_cache.CommitAsyncFlushes();
                 flushes.should_flush = true;
+                flushes.required |= BufferFlushes;
                 flushes.committed |= BufferFlushes;
             }
         }

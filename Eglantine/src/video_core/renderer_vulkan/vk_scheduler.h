@@ -19,6 +19,7 @@
 #include "common/polyfill_thread.h"
 #include "common/settings.h"
 #include "video_core/gpu_split.h"
+#include "video_core/readback_dependency_diagnostics.h"
 #include "video_core/renderer_vulkan/vk_master_semaphore.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
 
@@ -135,6 +136,8 @@ public:
         return true;
     }
 
+    void EnableHostReadbackVisibility() { host_readback_visibility = true; }
+
     /// Returns the current command buffer tick.
     [[nodiscard]] u64 CurrentTick() const noexcept {
         return master_semaphore->CurrentTick();
@@ -152,6 +155,7 @@ public:
     /// be waiting for them).
     void Wait(u64 tick, double target_fps = 0.0, bool may_flush = true) {
         if (tick > 0 && (may_flush || WaitForSubmission(tick))) {
+            VideoCommon::ReadbackDependencyDiagnostics::GpuWaitScope readback_wait{tick};
             if (tick >= master_semaphore->CurrentTick()) {
                 Flush();
             }
@@ -329,6 +333,7 @@ private:
     DeferredClear deferred_clear;
 
     std::unique_ptr<CommandChunk> chunk;
+    bool host_readback_visibility{};
     std::function<void()> on_submit;
 
     State state;
