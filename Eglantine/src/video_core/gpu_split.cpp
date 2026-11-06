@@ -151,6 +151,9 @@ void GpuSplit::Stop() {
     front_pending.clear();
     front_lower_bounds.clear();
     front_adds.clear();
+    front_reports.clear();
+    reported_words.clear();
+    sync_pending = false;
     front_macros = false;
     tracks_releases = false;
     Tegra::Nx2SemaphoreLedger::Get().Clear();
@@ -296,10 +299,21 @@ std::optional<u32> GpuSplit::PendingRelease(u64 key) {
 }
 
 bool GpuSplit::WritePending(u64 key) {
+    const u64 done = consumed.load(std::memory_order_acquire);
+    if (front_reports.size() > 4096) {
+        std::erase_if(front_reports, [done](const auto& entry) { return done >= entry.second; });
+    }
+    if (const auto it = front_reports.find(key); it != front_reports.end()) {
+        if (done < it->second) {
+            return true;
+        }
+        front_reports.erase(it);
+    }
     return PendingRelease(key) || PendingPosition(key) || PendingLowerBound(key, 0);
 }
 
 void GpuSplit::Drain() {
+    sync_pending = false;
     consumed_cache = consumed.load(std::memory_order_acquire);
     if (consumed_cache == write_position) {
         return;

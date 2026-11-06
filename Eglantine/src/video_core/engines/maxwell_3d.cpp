@@ -7,9 +7,11 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <optional>
+#include <unordered_map>
 #include "common/assert.h"
 #include "common/bit_util.h"
 #include "common/scope_exit.h"
@@ -854,6 +856,10 @@ struct Maxwell3D::FrontState {
     /// then can it have a deferred instanced draw to issue at the end of a macro.
     bool draw_pending{true};
     bool skip_same{}; ///< SkipSameValueWrites() && FrontSkipSame(), read once
+    /// MME DMA read sources (address space and GPU address): how many drains after a wait for
+    /// idle in a row found nothing new there, or -1 once one did (FrontDmaRead,
+    /// EDEN_NX2_DMA_READ_TRUST=1).
+    std::unordered_map<u64, s32> read_trust;
 };
 
 namespace {
@@ -938,6 +944,7 @@ void Maxwell3D::FrontWrite(VideoCommon::GpuSplit& split, FrontState& fs, u32 met
     u32 value = argument;
     bool shadow_kept = true;
     bool payload_release = false;
+    bool report_write = false;
     if (fs.control == Regs::ShadowRamControl::Track ||
         fs.control == Regs::ShadowRamControl::TrackWithFilter) {
         shadow_kept = fs.shadow[method] == argument;
@@ -990,13 +997,18 @@ void Maxwell3D::FrontWrite(VideoCommon::GpuSplit& split, FrontState& fs, u32 met
         case MAXWELL3D_REG_INDEX(falcon[4]):
             fs.regs[MAXWELL3D_REG_INDEX(shadow_scratch)] = 1;
             break;
+        case MAXWELL3D_REG_INDEX(wait_for_idle):
+            split.NoteSync();
+            break;
         case MAXWELL3D_REG_INDEX(report_semaphore.query): {
             // A payload release the back will write (ProcessQueryGet): noted below once sent, an
             // acquire it meets needs no drain (GpuSplit::NoteRelease, the puller's acquires).
             Regs::ReportSemaphore report;
             std::memcpy(&report, &fs.regs[MAXWELL3D_REG_INDEX(report_semaphore)], sizeof(report));
-            payload_release = split.TracksReleases() &&
-                              report.query.operation == Regs::ReportSemaphore::Operation::Release &&
+            report_write = split.TracksReleases() &&
+                           (report.query.operation == Regs::ReportSemaphore::Operation::Release ||
+                            report.query.operation == Regs::ReportSemaphore::Operation::ReportOnly);
+            payload_release = report.query.operation == Regs::ReportSemaphore::Operation::Release &&
                               static_cast<VideoCommon::QueryType>(report.query.report.Value()) ==
                                   VideoCommon::QueryType::Payload;
             break;
@@ -1015,10 +1027,15 @@ void Maxwell3D::FrontWrite(VideoCommon::GpuSplit& split, FrontState& fs, u32 met
     } else {
         split.Method(this, method, argument, is_last_call, nullptr);
     }
-    if (payload_release) [[unlikely]] {
+    if (report_write) [[unlikely]] {
         Regs::ReportSemaphore report;
         std::memcpy(&report, &fs.regs[MAXWELL3D_REG_INDEX(report_semaphore)], sizeof(report));
-        split.NoteRelease((u64{memory_manager.GetID()} << 48) | report.Address(), report.payload);
+        const u64 key = (u64{memory_manager.GetID()} << 48) | report.Address();
+        // For the MME's DMA reads that run ahead of the back (FrontDmaRead).
+        split.NoteReport(key, report.query.short_query ? 4 : 16);
+        if (payload_release) {
+            split.NoteRelease(key, report.payload);
+        }
     }
 }
 
@@ -1179,21 +1196,83 @@ void Maxwell3D::FrontRunMacro(Core::System& system, VideoCommon::GpuSplit& split
 
 void Maxwell3D::FrontDmaRead(VideoCommon::GpuSplit& split, FrontState& fs, u32 method,
                              u32 count) {
-    // The words may be written by methods still queued for the back (indirect draw arguments
-    // from a culling dispatch), and the caches that may hold newer ones belong to it.
-    split.Drain();
     const GPUVAddr source = (GPUVAddr{fs.regs[0x154] & 0x1ffffff} << 32) | fs.regs[0x155];
     const u32 ram = fs.regs[0x156];
     const u32 words = std::min<u32>(count, 0x1000);
     const size_t read_bytes = size_t{words} * sizeof(u32);
+    // The words may be written by methods still queued for the back (indirect draw arguments
+    // from a culling dispatch), and the caches that may hold newer ones belong to it. The
+    // hardware's MME reads memory in its front end, ahead of the work queued for the 3D
+    // pipeline, unless the game waited for idle since: so do the same, and drain (and ask the
+    // back's caches for what the GPU wrote) only after a wait for idle or for words the front
+    // sent a write to (a report, a release; an occlusion query's result read ahead is the
+    // previous one), or a word a report was ever sent to (its result can wait in the query
+    // cache after the back ran it). Draining for every read cost the front a quarter of each
+    // second in races. EDEN_NX2_DMA_READ_AHEAD=0: always drain.
+    static const bool read_ahead_wanted = [] {
+        const char* value = std::getenv("EDEN_NX2_DMA_READ_AHEAD");
+        return value == nullptr || value[0] != '0';
+    }();
+    const bool read_ahead = read_ahead_wanted && split.TracksReleases();
+    const bool sync = split.SyncPending();
+    bool drain = !read_ahead || sync || words > 64;
+    const u64 space = u64{memory_manager.GetID()} << 48;
+    bool pending = false;
+    const bool checkable = read_ahead && words <= 64;
+    for (u32 i = 0; i < (checkable ? words : 0); ++i) {
+        const u64 key = space | (source + u64{i} * sizeof(u32));
+        if (split.WritePending(key) || split.EverReported(key)) {
+            pending = true;
+            break;
+        }
+    }
+    // A wait for idle alone: a source whose drains found nothing new 16 times running (no word
+    // changed, no buffer the GPU wrote) is read ahead; one drain that finds something marks the
+    // source for good. EDEN_NX2_DMA_READ_TRUST=1 only: two races ended in GPU page faults at a
+    // course load with it (a source can be written by the GPU for the first time after proving
+    // clean), and it gained about 0.5%.
+    static const bool trust_sources = [] {
+        const char* value = std::getenv("EDEN_NX2_DMA_READ_TRUST");
+        return value != nullptr && value[0] == '1';
+    }();
+    s32* trust = nullptr;
+    std::array<u32, 64> early;
+    if (trust_sources && checkable && sync && !pending) {
+        if (fs.read_trust.size() > 65536) {
+            fs.read_trust.clear(); // sources learn again
+        }
+        trust = &fs.read_trust[space | source];
+        if (*trust >= 16) {
+            trust = nullptr;
+            drain = false;
+        }
+    }
+    drain = drain || pending;
+    if (trust && *trust >= 0) {
+        for (u32 i = 0; i < words; ++i) {
+            early[i] = memory_manager.Read<u32>(source + u64{i} * sizeof(u32));
+        }
+    }
+    if (drain) {
+        split.Drain();
+    }
     if (VideoCommon::Nx2Profile::Enabled()) {
         VideoCommon::Nx2Profile::Add(VideoCommon::Nx2Profile::Counter::DmaReadBytes, read_bytes);
     }
     // Query reports too (occlusion-based conditional rendering, see MacroEngine::ReadNativeMemory);
-    // the back is drained, so its caches are safe to flush from here.
+    // the back is drained, so its caches are safe to flush from here (not when reading ahead:
+    // they belong to the back while it runs).
     constexpr auto flush_caches = VideoCommon::CacheType::BufferCache | VideoCommon::CacheType::QueryCache;
-    if (memory_manager.IsMemoryDirty(source, read_bytes, flush_caches)) {
+    const bool dirty = drain && memory_manager.IsMemoryDirty(source, read_bytes, flush_caches);
+    if (dirty) {
         memory_manager.FlushRegion(source, read_bytes, flush_caches);
+    }
+    if (trust && *trust >= 0) {
+        bool changed = dirty;
+        for (u32 i = 0; i < words && !changed; ++i) {
+            changed = early[i] != memory_manager.Read<u32>(source + u64{i} * sizeof(u32));
+        }
+        *trust = changed ? -1 : *trust + 1;
     }
     for (u32 i = 0; i < words; ++i) {
         const u32 word = memory_manager.Read<u32>(source + u64{i} * sizeof(u32));

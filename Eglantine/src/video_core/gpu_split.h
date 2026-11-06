@@ -11,6 +11,7 @@
 #include <thread>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "common/common_types.h"
@@ -147,9 +148,29 @@ public:
     /// An acquire that value meets needs no Drain: the back runs the release before anything the
     /// front sends after the acquire. Empty once the back ran it (memory then tells).
     std::optional<u32> PendingRelease(u64 key);
-    /// Front: whether the back has yet to run a release noted above (exact, QMD, "add" or "max")
-    /// to the word at `key`.
+    /// Front: a report the back will write, `bytes` at `key` (address space and GPU address).
+    void NoteReport(u64 key, u32 bytes) {
+        for (u32 offset = 0; offset < bytes; offset += sizeof(u32)) {
+            front_reports[key + offset] = write_position;
+            reported_words.insert(key + offset);
+        }
+    }
+    /// Front: whether a report was ever sent to the word at `key`. The back's query cache can hold
+    /// its result after running it, until a fence writes it (MME DMA reads flush it).
+    [[nodiscard]] bool EverReported(u64 key) const {
+        return reported_words.contains(key);
+    }
+    /// Front: whether the back has yet to run a write the front sent to the word at `key`: a
+    /// report, or a release noted above (exact, QMD, "add" or "max").
     [[nodiscard]] bool WritePending(u64 key);
+    /// Front: a wait for idle (3D or puller) was sent: reads that run ahead of the back (the MME's
+    /// DMA reads) wait for it until the next Drain.
+    void NoteSync() {
+        sync_pending = true;
+    }
+    [[nodiscard]] bool SyncPending() const {
+        return sync_pending;
+    }
 
     /// Makes what was sent visible to the back.
     void Publish();
@@ -243,6 +264,9 @@ private:
     std::unordered_map<u64, u64> front_pending; ///< key -> write_position after the release
     std::unordered_map<u64, FrontRelease> front_lower_bounds;
     std::unordered_map<u64, std::vector<FrontRelease>> front_adds;
+    std::unordered_map<u64, u64> front_reports; ///< key of each word -> write_position after it
+    std::unordered_set<u64> reported_words;     ///< every word a report was sent to
+    bool sync_pending{};
 
     // Back side.
     Tegra::Engines::EngineInterface* back_engine{};
