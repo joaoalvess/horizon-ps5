@@ -528,6 +528,19 @@ void Image::SetObjectNameEXT(const char* name) const {
     SetObjectName(dld, owner, handle, VK_OBJECT_TYPE_IMAGE, name);
 }
 
+Image::MemoryBlock Image::GetMemoryBlock() const noexcept {
+    if (allocation == nullptr) {
+        return {};
+    }
+    VmaAllocationInfo2 info{};
+    vmaGetAllocationInfo2(allocator, allocation, &info);
+    if (info.dedicatedMemory) {
+        return {0, info.blockSize, info.allocationInfo.size};
+    }
+    return {reinterpret_cast<u64>(info.allocationInfo.deviceMemory), info.blockSize,
+            info.allocationInfo.size};
+}
+
 void Image::Release() const noexcept {
     if (handle) {
         vmaDestroyImage(allocator, handle, allocation);
