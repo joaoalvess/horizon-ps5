@@ -215,9 +215,9 @@ def main():
         results = [console.run_cache('cold')]
         # Keep the driver disk cache, but remove only this test's Vulkan blob.
         # This isolates disk-cache hits from Vulkan pipeline-cache blob reuse.
-        blob = console.data + '/user/cache/shader/' + TITLE + '/vulkan_pipelines.bin'
-        if any(entry['path'] == blob for entry in results[0]['title_files']):
-            console.remove(blob)
+        for entry in results[0]['title_files']:
+            if entry['path'].rsplit('/', 1)[-1].startswith('vulkan_pipelines.'):
+                console.remove(entry['path'])
         results.append(console.run_cache('warm-disk'))
         results.append(console.run_cache('warm'))
         (console.out / 'results.json').write_text(json.dumps(results, indent=2))

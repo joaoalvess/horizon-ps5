@@ -858,14 +858,14 @@ endif()
 # Guest core idle: count each wait and how long it lasted, and spin on the
 # interrupt flag for a bounded time before sleeping on the condition variable, because waking a
 # sleeping host thread puts the host scheduler's latency on the guest's critical path.
-string(FIND "${physical_core_source}" "void PhysicalCore::Idle() {" idle_begin)
+string(FIND "${physical_core_source}" "void PhysicalCore::Idle(KernelCore& kernel) {" idle_begin)
 string(FIND "${physical_core_source}" "bool PhysicalCore::IsInterrupted() const {" idle_end)
 if(idle_begin LESS 0 OR idle_end LESS idle_begin)
     message(FATAL_ERROR "Pinned PhysicalCore::Idle changed")
 endif()
 math(EXPR idle_length "${idle_end} - ${idle_begin}")
 string(SUBSTRING "${physical_core_source}" ${idle_begin} ${idle_length} idle_old)
-string(REPLACE "${idle_old}" [=[void PhysicalCore::Idle() {
+string(REPLACE "${idle_old}" [=[void PhysicalCore::Idle(KernelCore&) {
     const long long start = ::Eden::Performance::NowNs();
     const unsigned spins = ::Eden::Performance::idle_spin_iterations.load(std::memory_order_relaxed);
     for (unsigned i = 0; i < spins && !m_is_interrupted.load(std::memory_order_acquire); ++i)
@@ -2502,7 +2502,7 @@ list(APPEND common_sources "${PORT_BUILD_DIR}/multi_level_page_table.cpp")
     # Use getdents type information and one followed stat for each file size.
     eden_patch(vfs_real_source
         "std::vector<VirtualFile> RealVfsDirectory::GetFiles() const {\n    return IterateEntries<RealVfsFile, VfsFile>();\n}"
-        "std::vector<VirtualFile> RealVfsDirectory::GetFiles() const {\n    if (perms == OpenMode::AllowAppend) return {};\n    std::error_code error;\n    const auto entries = Eden::ReadNativeDirectoryMetadata(path, false, error);\n    if (error) { LOG_ERROR(Common_Filesystem, \"Directory enumeration failed: {}: {}\", path, error.message()); return {}; }\n    std::vector<VirtualFile> out;\n    out.reserve(entries.size());\n    for (const auto& entry : entries)\n        out.push_back(base.OpenFileFromEntry(FS::PathToUTF8String(entry.path), entry.size, path, perms));\n    return out;\n}")
+        "std::vector<VirtualFile> RealVfsDirectory::GetFiles() const {\n    if (perms == OpenMode::AllowAppend) return {};\n    std::error_code error;\n    const auto entries = Eden::ReadNativeDirectoryMetadata(path, false, error);\n    if (error) { LOG_ERROR(Common_Filesystem, \"Directory enumeration failed: {}: {}\", path, error.message()); return {}; }\n    std::vector<VirtualFile> out;\n    out.reserve(entries.size());\n    for (const auto& entry : entries)\n        out.push_back(base.OpenFileFromEntry(FS::PathToUTF8String(entry.path), entry.size, perms));\n    return out;\n}")
     eden_patch(vfs_real_source
         "std::vector<VirtualDir> RealVfsDirectory::GetSubdirectories() const {\n    return IterateEntries<RealVfsDirectory, VfsDirectory>();\n}"
         "std::vector<VirtualDir> RealVfsDirectory::GetSubdirectories() const {\n    if (perms == OpenMode::AllowAppend) return {};\n    std::error_code error;\n    const auto entries = Eden::ReadNativeDirectoryMetadata(path, true, error);\n    if (error) { LOG_ERROR(Common_Filesystem, \"Directory enumeration failed: {}: {}\", path, error.message()); return {}; }\n    std::vector<VirtualDir> out;\n    out.reserve(entries.size());\n    for (const auto& entry : entries)\n        out.push_back(base.OpenDirectory(FS::PathToUTF8String(entry.path), perms));\n    return out;\n}")

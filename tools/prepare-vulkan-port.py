@@ -3,7 +3,7 @@ from pathlib import Path
 import struct
 import subprocess
 import sys
-# --report: name every anchor that no longer matches (make update), instead of stopping at the first.
+# --report: name every anchor that no longer matches, instead of stopping at the first.
 report = '--report' in sys.argv
 source, output = map(Path, [a for a in sys.argv[1:] if a != '--report'])
 port = Path(__file__).resolve().parents[1] / 'headless'
@@ -1045,13 +1045,13 @@ adapt('src/video_core/texture_cache/texture_cache.h',
 # the texture-buffer loop looked like the cost of bind and measured 2.8%.
 adapt('src/video_core/buffer_cache/buffer_cache.h',
       'vulkan-cache/video_core/buffer_cache/buffer_cache.h', [
-    ('        if (buffer_bytes >= 1_GiB) {\n'
-     '            RunGarbageCollector(buffer_bytes >= 2_GiB);\n'
+    ('        if (buffer_bytes >= 512_MiB) {\n'
+     '            RunGarbageCollector(buffer_bytes >= 1_GiB);\n'
      '        }\n',
      '        const auto pressure = ::Eden::Performance::graphics_memory_probe.load(std::memory_order_relaxed);\n'
      '        const bool memory_short = frame_tick >= 60 && pressure && pressure();\n'
-     '        if (buffer_bytes >= 1_GiB || memory_short) {\n'
-     '            RunGarbageCollector(memory_short || buffer_bytes >= 2_GiB);\n'
+     '        if (buffer_bytes >= 512_MiB || memory_short) {\n'
+     '            RunGarbageCollector(memory_short || buffer_bytes >= 1_GiB);\n'
      '        }\n'),
     ('++frames % 600 == 0', '++frames % 60 == 0'),
     ('#include "video_core/buffer_cache/buffer_cache_base.h"',
