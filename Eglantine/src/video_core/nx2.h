@@ -188,7 +188,8 @@ inline void Nx2ClearSemaphoreRegions() {
 // layer pools, 170 MB-5.8 GB each, of which the game fills a little) get memory per block when the
 // GPU first writes there, not in full. nx2:gpu installs the handler and the span its regions cover;
 // the GPU memory manager calls Nx2BackSparseWrite before each write.
-using Nx2SparseBackingHandler = std::function<void(u64 gpu_address, u64 size)>;
+// With the bytes being written when known: blocks nobody wrote that only get zeros need no memory.
+using Nx2SparseBackingHandler = std::function<void(u64 gpu_address, u64 size, const void* data)>;
 inline std::recursive_mutex g_nx2_sparse_backing_mutex;
 inline Nx2SparseBackingHandler g_nx2_sparse_backing;
 inline std::atomic<u64> g_nx2_sparse_low{~u64{0}};
@@ -212,14 +213,14 @@ inline void Nx2AddSparseSpan(u64 gpu_address, u64 size) {
     }
 }
 
-inline void Nx2BackSparseWrite(u64 gpu_address, u64 size) {
+inline void Nx2BackSparseWrite(u64 gpu_address, u64 size, const void* data = nullptr) {
     if (gpu_address + size <= g_nx2_sparse_low.load(std::memory_order_relaxed) ||
         gpu_address >= g_nx2_sparse_high.load(std::memory_order_relaxed)) [[likely]] {
         return;
     }
     std::scoped_lock lk{g_nx2_sparse_backing_mutex};
     if (g_nx2_sparse_backing) {
-        g_nx2_sparse_backing(gpu_address, size);
+        g_nx2_sparse_backing(gpu_address, size, data);
     }
 }
 

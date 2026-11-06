@@ -308,7 +308,7 @@ void MemoryManager::Write(GPUVAddr addr, T data) {
         return;
     }
     // A Switch 2 sparse block nobody wrote yet gets its memory now.
-    Tegra::Nx2BackSparseWrite(addr, sizeof(T));
+    Tegra::Nx2BackSparseWrite(addr, sizeof(T), &data);
     if (auto page_pointer{GetPointer(addr)}; page_pointer) {
         std::memcpy(page_pointer, &data, sizeof(T));
         return;
@@ -493,7 +493,7 @@ void MemoryManager::ReadWordsUnsafe(GPUVAddr gpu_src_addr, u32* dest, u32 count)
 void MemoryManager::WriteBlockImpl(GPUVAddr gpu_dest_addr, const void* src_buffer, std::size_t size, [[maybe_unused]] VideoCommon::CacheType which, bool unsafe) {
     // Give Switch 2 sparse pages the write lands on their memory first (otherwise it is dropped).
     VideoCommon::LoadingProbe::MarkWriteback("sparse write backing", gpu_dest_addr);
-    Tegra::Nx2BackSparseWrite(gpu_dest_addr, size);
+    Tegra::Nx2BackSparseWrite(gpu_dest_addr, size, src_buffer);
     VideoCommon::LoadingProbe::MarkWriteback("sparse backing done", gpu_dest_addr);
     auto just_advance = [&]([[maybe_unused]] std::size_t page_index, [[maybe_unused]] std::size_t offset, std::size_t copy_amount) {
         src_buffer = static_cast<const u8*>(src_buffer) + copy_amount;

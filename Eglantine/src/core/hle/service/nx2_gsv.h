@@ -364,7 +364,9 @@ public:
         });
         if (LazySparseRegions()) {
             Tegra::Nx2SetSparseBacking(
-                [this](u64 gpu_address, u64 size) { BackSparseWrite(gpu_address, size); });
+                [this](u64 gpu_address, u64 size, const void* data) {
+                    BackSparseWrite(gpu_address, size, static_cast<const u8*>(data));
+                });
         }
     }
 
@@ -943,7 +945,24 @@ private:
     // usually on the GPU thread): the blocks the write touches get memory, cleared, behind the
     // region's device pages. The GPU mapping stays as it is, so the images over the region keep
     // their storage and only see the write.
-    void BackSparseWrite(u64 gpu_address, u64 size) {
+    static bool IsAllZero(const u8* data, size_t size) {
+        size_t i = 0;
+        for (; i + sizeof(u64) <= size; i += sizeof(u64)) {
+            u64 word;
+            std::memcpy(&word, data + i, sizeof(word));
+            if (word != 0) {
+                return false;
+            }
+        }
+        for (; i < size; ++i) {
+            if (data[i] != 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void BackSparseWrite(u64 gpu_address, u64 size, const u8* data = nullptr) {
         VideoCommon::LoadingProbe::MarkWriteback("entered sparse backing handler", gpu_address);
         if (size == 0 || size > (std::numeric_limits<u64>::max)() - gpu_address) {
             return;
@@ -970,12 +989,29 @@ private:
             }
         };
         bool waits_for_other = false;
+        u64 zero_bytes = 0;
         {
             VideoCommon::LoadingProbe::MarkWriteback("lock sparse regions", gpu_address);
             std::unique_lock lk{m_region_mutex};
             VideoCommon::LoadingProbe::MarkWriteback("enumerate sparse blocks", gpu_address);
             for_regions([&](u64 start, SparseRegion& region, u64 first, u64 last) {
                 for (u64 block = first; block <= last; ++block) {
+                    // Zeros over a block nobody wrote change nothing: it reads zero without
+                    // memory (upstream nx2 40902b09c7). Mario Kart World clears about 1 GB of
+                    // them at boot, and each touched block took 4 MiB plus device memory for the
+                    // images over it.
+                    if (data != nullptr && block < region.blocks.size() &&
+                        region.blocks[block] == SparseRegion::Block::Empty) {
+                        const u64 block_begin = start + block * SparseBlockSize;
+                        const u64 write_begin = (std::max)(gpu_address, block_begin);
+                        const u64 write_end =
+                            (std::min)({end, block_begin + SparseBlockSize, start + region.size});
+                        if (write_end > write_begin &&
+                            IsAllZero(data + (write_begin - gpu_address), write_end - write_begin)) {
+                            zero_bytes += write_end - write_begin;
+                            continue;
+                        }
+                    }
                     if (const auto pending = region.BeginBacking(block)) {
                         todo.push_back({start, *pending});
                     } else if (region.blocks[block] == SparseRegion::Block::Pending) {
@@ -983,6 +1019,16 @@ private:
                     }
                 }
             });
+        }
+        if (zero_bytes != 0) {
+            std::scoped_lock lk{m_region_mutex};
+            const u64 before = m_sparse_zero_bytes;
+            m_sparse_zero_bytes += zero_bytes;
+            if (before == 0 || (before >> 28) != (m_sparse_zero_bytes >> 28)) {
+                LOG_INFO(Service, "nx2:gpu {} MiB of zeros over unwritten sparse blocks left out "
+                                  "(they read zero without memory)",
+                         m_sparse_zero_bytes >> 20);
+            }
         }
         // Allocating and mapping happens outside the lock (see AllocateGpuOnlyBacking).
         for (const auto& [start, block] : todo) {
@@ -1080,6 +1126,7 @@ private:
     u64 m_sparse_generation{};
     u64 m_sparse_blocks{};       ///< Sparse blocks backed so far
     u64 m_sparse_backed_bytes{}; ///< Sparse region memory given out so far
+    u64 m_sparse_zero_bytes{};   ///< Zeros written over unwritten sparse blocks, left out
     u64 m_gpu_only_bytes{};      ///< Backing of GPU-only regions and sparse blocks right now
     u64 m_gpu_only_peak{};
     std::atomic<u64> m_alias_hint{}; ///< 2 MiB slot after the last backing in the alias code region
