@@ -779,6 +779,91 @@ struct KeplerCompute::FrontState {
     MacroEngine* macro{}; ///< Without a native context: the one macro engine
 };
 
+namespace {
+// The front's copy of the QMD scheduling (one for every channel, as the back's).
+NativeQmdScheduler& FrontQmdScheduler() {
+    static NativeQmdScheduler scheduler = [] {
+        NativeQmdScheduler own;
+        own.UseOwnTable();
+        return own;
+    }();
+    return scheduler;
+}
+} // Anonymous namespace
+
+// Split GPU thread: the front runs the QMD scheduling the back will run (the same scheduler on
+// the same QMDs, in a copy of its own, dispatching nothing) to learn which semaphores the back's
+// QMD releases will write, and where in what it was sent (GpuSplit::NotePending). An acquire on
+// one meets the value the front's copy read (NoteRelease, NoteAdd, NoteLowerBound) or, failing
+// that, waits only for the back to get that far, not for it to run everything (Drain). The front
+// reads each QMD when its copy runs it, as the back does (the SDK patches payloads while a QMD
+// waits). Called after the method is sent. As ProcessNativeMethod's 0x107 (inline QMD) and
+// 0xae-0xb0 (QMD control).
+void KeplerCompute::FrontQmd(VideoCommon::GpuSplit& split, FrontState& fs, u32 method, u32 argument) {
+    if (method != 0x107 && method != 0xae && method != 0xaf && method != 0xb0) {
+        return;
+    }
+    if (!split.TracksReleases()) {
+        return;
+    }
+    using Descriptor = NativeQmdScheduler::Descriptor;
+    std::optional<Descriptor> inline_qmd;
+    GPUVAddr qmd_address{};
+    u32 action = argument;
+    if (method == 0x107) {
+        qmd_address = ((GPUVAddr{fs.registers[0xc6]} << 32) | fs.registers[0xc7]) << 8;
+        if (!(fs.registers[0xa7] & (1U << 24)) && (fs.registers[0xcc] & (1U << 12))) {
+            return;
+        }
+        if (!memory_manager.IsFullyMappedRange(qmd_address, 256)) {
+            return;
+        }
+        inline_qmd.emplace();
+        std::copy_n(fs.registers.begin() + 0xc8, inline_qmd->size(), inline_qmd->begin());
+        action = 3;
+    } else {
+        qmd_address = GPUVAddr{fs.registers[0xad]} << 8;
+        if (method == 0xae || (method == 0xaf && !(argument & 2)) ||
+            (method == 0xb0 && ((argument & 15) == 0 || (argument & 15) == 1))) {
+            return;
+        }
+    }
+    const u64 space = u64{memory_manager.GetID()} << 48;
+    static_cast<void>(FrontQmdScheduler().Signal(
+        qmd_address, action,
+        [&](u64 address, Descriptor& descriptor) {
+            if (inline_qmd && address == qmd_address) {
+                descriptor = *inline_qmd;
+                return true;
+            }
+            if (!memory_manager.IsFullyMappedRange(address, sizeof(descriptor))) return false;
+            memory_manager.ReadBlockUnsafe(address, descriptor.data(), sizeof(descriptor));
+            return true;
+        },
+        [&](u64 address, u32 payload, u32 flags) {
+            const bool four_words = (flags >> 30) == 0;
+            if (!memory_manager.IsFullyMappedRange(address, four_words ? 16 : sizeof(payload))) return false;
+            split.NotePending(space | address);
+            if (flags & (1U << 26)) {
+                if ((flags >> 20) & 7) {
+                    split.NoteUnknown(space | address);
+                } else {
+                    split.NoteAdd(space | address, payload);
+                }
+            } else if (four_words) {
+                for (u64 word = 0; word < 16; word += 4) {
+                    split.NoteUnknown(space | (address + word));
+                }
+            } else if (flags & (1U << 19)) {
+                split.NoteLowerBound(space | address, payload);
+            } else {
+                split.NoteRelease(space | address, payload);
+            }
+            return true;
+        },
+        [](const Descriptor&) { return true; }));
+}
+
 KeplerCompute::FrontState& KeplerCompute::Front(VideoCommon::GpuSplit& split) {
     if (!front) [[unlikely]] {
         // Copy the back's state and take the macros over while it is idle.
@@ -866,6 +951,7 @@ void KeplerCompute::FrontCallMethod(Core::System& system, VideoCommon::GpuSplit&
     }
     FrontApply(fs, method, argument);
     split.Method(this, method, argument, is_last_call, segment);
+    FrontQmd(split, fs, method, argument);
 }
 
 void KeplerCompute::FrontCallMultiMethod(Core::System& system, VideoCommon::GpuSplit& split,
@@ -884,6 +970,11 @@ void KeplerCompute::FrontCallMultiMethod(Core::System& system, VideoCommon::GpuS
         }
     }
     split.MultiMethod(this, method, base_start, amount, methods_pending, segment);
+    if (method < fs.registers.size()) {
+        for (u32 i = 0; i < amount; ++i) {
+            FrontQmd(split, fs, method, base_start[i]);
+        }
+    }
 }
 
 void KeplerCompute::FrontRunMacro(Core::System& system, VideoCommon::GpuSplit& split,
@@ -912,6 +1003,7 @@ void KeplerCompute::FrontRunMacro(Core::System& system, VideoCommon::GpuSplit& s
             }
             FrontApply(fs, address, value);
             split.MacroWrite(this, address, value);
+            FrontQmd(split, fs, address, value);
             return true;
         });
     if (!result.success) {

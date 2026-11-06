@@ -937,6 +937,7 @@ void Maxwell3D::FrontWrite(VideoCommon::GpuSplit& split, FrontState& fs, u32 met
     // As ProcessShadowRam does on the back.
     u32 value = argument;
     bool shadow_kept = true;
+    bool payload_release = false;
     if (fs.control == Regs::ShadowRamControl::Track ||
         fs.control == Regs::ShadowRamControl::TrackWithFilter) {
         shadow_kept = fs.shadow[method] == argument;
@@ -989,6 +990,17 @@ void Maxwell3D::FrontWrite(VideoCommon::GpuSplit& split, FrontState& fs, u32 met
         case MAXWELL3D_REG_INDEX(falcon[4]):
             fs.regs[MAXWELL3D_REG_INDEX(shadow_scratch)] = 1;
             break;
+        case MAXWELL3D_REG_INDEX(report_semaphore.query): {
+            // A payload release the back will write (ProcessQueryGet): noted below once sent, an
+            // acquire it meets needs no drain (GpuSplit::NoteRelease, the puller's acquires).
+            Regs::ReportSemaphore report;
+            std::memcpy(&report, &fs.regs[MAXWELL3D_REG_INDEX(report_semaphore)], sizeof(report));
+            payload_release = split.TracksReleases() &&
+                              report.query.operation == Regs::ReportSemaphore::Operation::Release &&
+                              static_cast<VideoCommon::QueryType>(report.query.report.Value()) ==
+                                  VideoCommon::QueryType::Payload;
+            break;
+        }
         default:
             if (method >= cb_data && method < cb_data + 16) {
                 fs.regs[MAXWELL3D_REG_INDEX(const_buffer.offset)] += sizeof(u32);
@@ -1002,6 +1014,11 @@ void Maxwell3D::FrontWrite(VideoCommon::GpuSplit& split, FrontState& fs, u32 met
         split.MacroWrite(this, method, argument);
     } else {
         split.Method(this, method, argument, is_last_call, nullptr);
+    }
+    if (payload_release) [[unlikely]] {
+        Regs::ReportSemaphore report;
+        std::memcpy(&report, &fs.regs[MAXWELL3D_REG_INDEX(report_semaphore)], sizeof(report));
+        split.NoteRelease((u64{memory_manager.GetID()} << 48) | report.Address(), report.payload);
     }
 }
 

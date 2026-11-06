@@ -7,9 +7,11 @@
 #include <cstring>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <thread>
 #include <type_traits>
 #include <unordered_map>
+#include <vector>
 
 #include "common/common_types.h"
 
@@ -49,6 +51,9 @@ public:
     /// Whether the front runs the engines' macros (EDEN_NX2_SPLIT=2).
     [[nodiscard]] bool FrontMacros() const {
         return front_macros;
+    }
+    [[nodiscard]] bool TracksReleases() const {
+        return tracks_releases;
     }
 
     /// Starts the back thread once the split is wanted (EDEN_NX2_SPLIT=1, a Switch 2 title,
@@ -106,6 +111,45 @@ public:
     }
     /// Waits for releases sent to the requested range to finish (front thread only).
     void AwaitReleases(GPUVAddr address, u64 size);
+    /// Front: a semaphore release just sent to the back; `key`: address space and GPU address.
+    void NoteRelease(u64 key, u32 value) {
+        front_releases[key] = {value, write_position};
+    }
+    /// Front: a QMD release that leaves at least `value` at `key` (a "max" release), as the
+    /// front's copy of the QMD scheduling read it.
+    void NoteLowerBound(u64 key, u32 value) {
+        front_lower_bounds[key] = {value, write_position};
+    }
+    /// Front: a QMD release that adds `value` to the word at `key`.
+    void NoteAdd(u64 key, u32 value) {
+        front_adds[key].push_back({value, write_position});
+    }
+    /// Front: a lower bound of the word at `key` once the back has run everything sent so far,
+    /// given `memory` (what it holds now): the adds and "max" releases the back has not run yet.
+    /// Adds it ran whose fence has not landed count as not there (low, safe). For "greater or
+    /// equal" acquires only; empty when nothing for `key` is pending.
+    std::optional<u32> PendingLowerBound(u64 key, u32 memory);
+    /// Front: a release to `key` whose value the front cannot know (a QMD's, read when it runs)
+    /// was just sent to the back.
+    void NotePending(u64 key) {
+        front_pending[key] = write_position;
+    }
+    void NoteUnknown(u64 key) {
+        front_releases.erase(key);
+        front_lower_bounds.erase(key);
+        front_adds.erase(key);
+        front_pending[key] = write_position;
+    }
+    /// Front: where the back will have run the last such release to `key`, while it has not
+    /// (DrainTo it: a partial drain).
+    std::optional<u64> PendingPosition(u64 key);
+    /// Front: what the last release noted for `key` writes, while the back may not have run it.
+    /// An acquire that value meets needs no Drain: the back runs the release before anything the
+    /// front sends after the acquire. Empty once the back ran it (memory then tells).
+    std::optional<u32> PendingRelease(u64 key);
+    /// Front: whether the back has yet to run a release noted above (exact, QMD, "add" or "max")
+    /// to the word at `key`.
+    [[nodiscard]] bool WritePending(u64 key);
 
     /// Makes what was sent visible to the back.
     void Publish();
@@ -178,6 +222,7 @@ private:
     Core::System* system{};
     bool active{};
     bool front_macros{};
+    bool tracks_releases{};
     std::unique_ptr<u64[]> ring;
 
     // Front side.
@@ -190,6 +235,14 @@ private:
     Tegra::Engines::EngineInterface* front_engine{};
     /// Semaphore releases sent to the back: address, write position after them.
     std::unordered_map<GPUVAddr, u64> sent_releases;
+    struct FrontRelease {
+        u32 value;
+        u64 position; ///< write_position after the release: run once consumed reaches it
+    };
+    std::unordered_map<u64, FrontRelease> front_releases;
+    std::unordered_map<u64, u64> front_pending; ///< key -> write_position after the release
+    std::unordered_map<u64, FrontRelease> front_lower_bounds;
+    std::unordered_map<u64, std::vector<FrontRelease>> front_adds;
 
     // Back side.
     Tegra::Engines::EngineInterface* back_engine{};

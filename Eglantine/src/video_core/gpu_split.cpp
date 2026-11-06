@@ -113,6 +113,8 @@ void GpuSplit::MaybeStart(Core::System& system_) {
     }
     system = &system_;
     check_owner = std::getenv("EDEN_NX2_SPLIT_CHECK") != nullptr;
+    const char* const ledger = std::getenv("EDEN_NX2_ACQ_LEDGER");
+    tracks_releases = ledger == nullptr || (ledger[0] != '0' && ledger[0] != '1');
     ring = std::make_unique<u64[]>(RingWords);
     back_thread = std::jthread([this](std::stop_token stop_token) { BackLoop(stop_token); });
     active = true;
@@ -145,7 +147,12 @@ void GpuSplit::Stop() {
     publish_every = PublishEvery;
     front_engine = nullptr;
     back_engine = nullptr;
+    front_releases.clear();
+    front_pending.clear();
+    front_lower_bounds.clear();
+    front_adds.clear();
     front_macros = false;
+    tracks_releases = false;
     Tegra::Nx2SemaphoreLedger::Get().Clear();
     published.store(0, std::memory_order_relaxed);
     consumed.store(0, std::memory_order_relaxed);
@@ -223,6 +230,73 @@ void GpuSplit::AwaitReleases(GPUVAddr address, u64 size) {
         Drain();
         sent_releases.clear();
     }
+}
+
+std::optional<u32> GpuSplit::PendingLowerBound(u64 key, u32 memory) {
+    const u64 done = consumed.load(std::memory_order_acquire);
+    std::optional<u64> bound;
+    if (const auto it = front_adds.find(key); it != front_adds.end()) {
+        auto& adds = it->second;
+        std::erase_if(adds, [done](const FrontRelease& add) { return done >= add.position; });
+        u64 sum = 0;
+        for (const auto& add : adds) sum += add.value;
+        if (adds.empty()) {
+            front_adds.erase(it);
+        } else if (u64{memory} + sum <= 0xffffffffULL) {
+            bound = u64{memory} + sum;
+        }
+    }
+    if (const auto it = front_lower_bounds.find(key); it != front_lower_bounds.end()) {
+        if (done >= it->second.position) {
+            front_lower_bounds.erase(it);
+        } else {
+            bound = (std::max)(bound.value_or(0), u64{(std::max)(memory, it->second.value)});
+        }
+    }
+    if (front_adds.size() > 4096 || front_lower_bounds.size() > 4096) {
+        std::erase_if(front_lower_bounds, [done](const auto& entry) { return done >= entry.second.position; });
+        std::erase_if(front_adds, [done](auto& entry) {
+            std::erase_if(entry.second, [done](const FrontRelease& add) { return done >= add.position; });
+            return entry.second.empty();
+        });
+    }
+    return bound ? std::optional<u32>{static_cast<u32>(*bound)} : std::nullopt;
+}
+
+std::optional<u64> GpuSplit::PendingPosition(u64 key) {
+    const u64 done = consumed.load(std::memory_order_acquire);
+    if (front_pending.size() > 4096) {
+        std::erase_if(front_pending, [done](const auto& entry) { return done >= entry.second; });
+    }
+    const auto it = front_pending.find(key);
+    if (it == front_pending.end()) {
+        return std::nullopt;
+    }
+    if (done >= it->second) {
+        front_pending.erase(it);
+        return std::nullopt;
+    }
+    return it->second;
+}
+
+std::optional<u32> GpuSplit::PendingRelease(u64 key) {
+    const u64 done = consumed.load(std::memory_order_acquire);
+    if (front_releases.size() > 4096) {
+        std::erase_if(front_releases, [done](const auto& entry) { return done >= entry.second.position; });
+    }
+    const auto it = front_releases.find(key);
+    if (it == front_releases.end()) {
+        return std::nullopt;
+    }
+    if (done >= it->second.position) {
+        front_releases.erase(it);
+        return std::nullopt;
+    }
+    return it->second.value;
+}
+
+bool GpuSplit::WritePending(u64 key) {
+    return PendingRelease(key) || PendingPosition(key) || PendingLowerBound(key, 0);
 }
 
 void GpuSplit::Drain() {
@@ -399,6 +473,7 @@ void GpuSplit::BackLoop(std::stop_token stop_token) {
 #ifdef _WIN32
     g_back_thread_id.store(GetCurrentThreadId(), std::memory_order_relaxed);
 #endif
+    const u64 progress = tracks_releases ? 256 : 4096;
     u64 read_position = 0;
     while (!stop_token.stop_requested()) {
         Nx2Profile::Report("GPU back thread");
@@ -431,7 +506,8 @@ void GpuSplit::BackLoop(std::stop_token stop_token) {
             const size_t size = Execute(&ring[index]);
             read_position += size != 0 ? size : RingWords - index;
             // Hand ring space back now and then while working through a long batch.
-            if (read_position - last_store >= 4096 && read_position != available) {
+            // Often enough for the front's partial waits (DrainTo a pending release) too.
+            if (read_position - last_store >= progress && read_position != available) {
                 consumed.store(read_position, std::memory_order_release);
                 last_store = read_position;
             }

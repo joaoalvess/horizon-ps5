@@ -26,7 +26,7 @@ public:
     static bool Enabled() {
         static const bool enabled = [] {
             const char* value = std::getenv("EDEN_NX2_ACQ_LEDGER");
-            return value == nullptr || value[0] != '0';
+            return value != nullptr && value[0] == '1';
         }();
         return enabled;
     }

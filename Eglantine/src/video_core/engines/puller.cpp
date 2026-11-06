@@ -85,12 +85,22 @@ bool LedgerActive() {
     return Nx2SemaphoreLedger::Enabled() && VideoCommon::GpuSplit::Get().Active();
 }
 
+// Semaphores by address space and GPU address (GpuSplit::NoteRelease).
+u64 ReleaseKey(const DmaPusher& dma_pusher, GPUVAddr address) {
+    return (u64{dma_pusher.memory_manager.GetID()} << 48) | address;
+}
+
+// A release sent to the split's back: an acquire it meets need not wait for the back to run it
+// (MetByPendingRelease), and one it does not meet waits only up to it (DrainBackToRelease).
 void NoteRelease(DmaPusher& dma_pusher, GPUVAddr address, u32 payload) {
     auto& split = VideoCommon::GpuSplit::Get();
     if (!split.Active()) {
         return;
     }
     g_release_positions[address & ~GPUVAddr{3}] = split.WritePosition();
+    if (split.TracksReleases()) {
+        split.NoteRelease(ReleaseKey(dma_pusher, address), payload);
+    }
     if (!Nx2SemaphoreLedger::Enabled()) {
         return;
     }
@@ -100,6 +110,9 @@ void NoteRelease(DmaPusher& dma_pusher, GPUVAddr address, u32 payload) {
 }
 
 void ForgetRelease(DmaPusher& dma_pusher, GPUVAddr address) {
+    if (auto& split = VideoCommon::GpuSplit::Get(); split.TracksReleases()) {
+        split.NoteUnknown(ReleaseKey(dma_pusher, address));
+    }
     if (!LedgerActive()) {
         return;
     }
@@ -118,6 +131,53 @@ std::optional<u32> QueuedRelease(DmaPusher& dma_pusher, GPUVAddr address) {
     }
     return Nx2SemaphoreLedger::Get().QueuedValue(
         *device, VideoCommon::GpuSplit::Get().ConsumedPosition());
+}
+
+// Whether a release the split's back has not run yet meets an acquire: the back runs it before
+// whatever the front sends after the acquire, so the acquire needs no Drain (and no wait for the
+// host GPU to reach a fenced release). Never for the CPU's releases: those the front can't see.
+// `geq`: a "greater or equal" acquire, which the QMD adds and "max" releases the back has not
+// run yet can also meet: the word ends at least at the bound PendingLowerBound gives.
+template <typename Met>
+bool MetByPendingRelease(const DmaPusher& dma_pusher, GPUVAddr address, const Met& met, bool geq = false) {
+    auto& split = VideoCommon::GpuSplit::Get();
+    if (!split.TracksReleases()) {
+        return false;
+    }
+    const u64 key = ReleaseKey(dma_pusher, address);
+    const auto value = split.PendingRelease(key);
+    if (!value || !met(*value)) {
+        if (!geq) {
+            return false;
+        }
+        const auto bound = split.PendingLowerBound(key, dma_pusher.memory_manager.Read<u32>(address));
+        if (!bound || !met(*bound)) {
+            return false;
+        }
+    }
+    VideoCommon::Nx2Profile::Add(VideoCommon::Nx2Profile::Counter::AcquirePending, 1);
+    return true;
+}
+
+// Split GPU thread: a release to the semaphore whose value the front cannot know (a QMD's,
+// GpuSplit::NotePending) is on its way: wait for the back to run just that far, then read the
+// word, instead of waiting for it to run everything sent (DrainBack).
+template <typename Met>
+bool MetAfterPendingRelease(const DmaPusher& dma_pusher, GPUVAddr address, const Met& met) {
+    auto& split = VideoCommon::GpuSplit::Get();
+    if (!split.TracksReleases()) {
+        return false;
+    }
+    const auto position = split.PendingPosition(ReleaseKey(dma_pusher, address));
+    if (!position) {
+        return false;
+    }
+    split.DrainTo(*position);
+    if (!met(dma_pusher.memory_manager.Read<u32>(address))) {
+        return false;
+    }
+    VideoCommon::Nx2Profile::Add(VideoCommon::Nx2Profile::Counter::AcquirePending, 1);
+    return true;
 }
 
 void DrainBackToRelease(GPUVAddr address) {
@@ -157,6 +217,13 @@ bool Puller::CanResumeAcquire(DmaPusher& dma_pusher) {
     if (!pending_acquire) {
         return true;
     }
+    const auto matches = [this](u32 value) { return pending_acquire->Matches(value); };
+    if (MetByPendingRelease(dma_pusher, pending_acquire->address, matches,
+                            pending_acquire->operation ==
+                                static_cast<u32>(GpuSemaphoreOperation::AcquireGequal)) ||
+        MetAfterPendingRelease(dma_pusher, pending_acquire->address, matches)) {
+        return true;
+    }
     // The release may still be queued for the split GPU thread's back half (and the caches
     // ReadSemaphoreWord asks are its state).
     const auto queued = QueuedRelease(dma_pusher, pending_acquire->address);
@@ -166,6 +233,19 @@ bool Puller::CanResumeAcquire(DmaPusher& dma_pusher) {
     if (!queued && AcquireChecksRawWordFirst() &&
         pending_acquire->Matches(dma_pusher.memory_manager.Read<u32>(pending_acquire->address))) {
         return true;
+    }
+    if (VideoCommon::GpuSplit::Get().TracksReleases()) {
+        if (Nx2SemaphoreWaiters::Get().Latched(this)) {
+            return true;
+        }
+        // The full check below drains the back; the scheduler polls a suspended channel
+        // thousands of times a second (about 2,000 drains a second in races), so make it at
+        // most every 2 ms.
+        const auto now = std::chrono::steady_clock::now();
+        if (now - pending_acquire->checked < std::chrono::milliseconds{2}) {
+            return false;
+        }
+        pending_acquire->checked = now;
     }
     DrainBackToRelease(pending_acquire->address);
     const u32 current = ReadSemaphoreWord(dma_pusher, pending_acquire->address);
@@ -367,6 +447,16 @@ void Puller::ProcessSemaphoreTriggerMethod(DmaPusher& dma_pusher) {
             ++acquire_stats.raw;
             return;
         }
+        // Met by a release the front sent and the back has not run yet (or, for a QMD's, once
+        // the back ran up to it): no full drain.
+        if (MetByPendingRelease(dma_pusher, acquire.address,
+                                [&acquire](u32 value) { return acquire.Matches(value); },
+                                op == GpuSemaphoreOperation::AcquireGequal) ||
+            MetAfterPendingRelease(dma_pusher, acquire.address,
+                                   [&acquire](u32 value) { return acquire.Matches(value); })) {
+            ++acquire_stats.ledger;
+            return;
+        }
         {
             auto& split = VideoCommon::GpuSplit::Get();
             if (split.Active() && split.ConsumedPosition() < split.WritePosition()) {
@@ -505,9 +595,14 @@ void Puller::ProcessSemaphoreExecute(DmaPusher& dma_pusher, u32 argument) {
             if (meets(*queued)) {
                 return;
             }
-        } else if ((operation == 2 || operation == 3) && LedgerActive() &&
+        } else if ((operation == 2 || operation == 3) &&
+                   (LedgerActive() || VideoCommon::GpuSplit::Get().TracksReleases()) &&
                    AcquireChecksRawWordFirst() &&
                    meets(dma_pusher.memory_manager.Read<u32>(address))) {
+            return;
+        }
+        if (MetByPendingRelease(dma_pusher, address, meets, operation == 2 || operation == 3) ||
+            MetAfterPendingRelease(dma_pusher, address, meets)) {
             return;
         }
     }
