@@ -6,14 +6,14 @@ builds on the following projects, each under its own license.
 ## Emulator
 
 - **[Eglantine](https://github.com/Djihads80/Eglantine)**, GPL-3.0-or-later, a fork of
-  **[Eden](https://github.com/eden-emulator/mirror)**. The emulator core, built from the commit the
-  `Eglantine` submodule records, together with the dependencies Eden
+  **[Eden](https://github.com/eden-emulator/mirror)**. The emulator core, built from the
+  `Eglantine` folder of this repository, together with the dependencies Eden
   fetches and pins itself: Dynarmic, Boost, fmt, xbyak, zstd, lz4, Opus, SDL3,
   simpleini, sirit, SPIRV-Headers, Vulkan-Headers, Vulkan-Utility-Libraries,
   Vulkan Memory Allocator, ENet, frozen, cpp-httplib, nlohmann/json, and the time
   zone data. Each keeps its upstream license.
 - **[Zortos Eglantine fork](https://github.com/zortos293/Eglantine)**,
-  GPL-3.0-or-later. Referenced directly by the `Eglantine` submodule, including its
+  GPL-3.0-or-later. The base of the `Eglantine` folder (commit 3140648a), including its
   core, native shader, readback, service, runtime and test changes. The maintained
   Mario Kart performance patch also carries later core adaptations/backports;
   upstream source retains its GPL-3.0-or-later notices.

@@ -10,12 +10,12 @@ export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 tree=$1
 src="$root/Eglantine"
-[[ -f $src/CMakeLists.txt ]] || { echo "The Eglantine submodule is empty: git submodule update --init Eglantine" >&2; exit 1; }
+[[ -f $src/CMakeLists.txt ]] || { echo "$src has no CMakeLists.txt: the Eglantine folder is incomplete" >&2; exit 1; }
 
 commit=$(git -C "$src" rev-parse HEAD)
-stamp=eglantine-$commit
-if [[ -n $(git -C "$src" status --porcelain --untracked-files=all) ]]; then
-    stamp+=-$( { git -C "$src" diff HEAD; git -C "$src" ls-files --others --exclude-standard -z | (cd "$src" && xargs -0 -r sha256sum); } | sha256sum | cut -c1-12)
+stamp=eglantine-$(git -C "$src" rev-parse HEAD:./)
+if [[ -n $(git -C "$src" status --porcelain --untracked-files=all -- .) ]]; then
+    stamp+=-$( { git -C "$src" diff HEAD -- .; git -C "$src" ls-files --others --exclude-standard -z -- . | (cd "$src" && xargs -0 -r sha256sum); } | sha256sum | cut -c1-12)
 fi
 
 if [[ ! -f $tree/CMakeLists.txt || $(cat "$tree/.unpacked-from" 2>/dev/null) != "$stamp" ]]; then

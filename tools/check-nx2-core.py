@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Run the submodule core's shader, readback and mapping regression tests on the host."""
+"""Run the core's shader, readback and mapping regression tests on the host."""
 from pathlib import Path
 import os
 import subprocess
