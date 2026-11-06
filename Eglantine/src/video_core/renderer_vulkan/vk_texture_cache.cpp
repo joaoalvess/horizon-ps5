@@ -39,6 +39,7 @@
 #include "video_core/texture_cache/formatter.h"
 #include "video_core/texture_cache/samples_helper.h"
 #include "video_core/texture_cache/util.h"
+#include "video_core/readback_diagnostics.h"
 #include "video_core/vulkan_common/vulkan_device.h"
 #include "video_core/vulkan_common/sparse_binding_transaction.h"
 #include "video_core/vulkan_common/vulkan_memory_allocator.h"
@@ -3928,6 +3929,7 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
     Image& image, const StagingBufferRef& map,
     std::span<const VideoCommon::SwizzleParameters> swizzles) {
     const auto transcode_probe = [&](const char* phase, u64 bytes) {
+        if (!VideoCommon::ReadbackDiagnostics::Enabled()) return;
         char path[160];
         std::snprintf(path, sizeof(path), "/data/eglantineps5/logs/mkw-transcode-%d.log", getpid());
         if (std::FILE* file = std::fopen(path, "a")) {

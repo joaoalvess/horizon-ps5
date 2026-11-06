@@ -23,6 +23,7 @@
 #include "common/logging.h"
 #include <ranges>
 #include "video_core/vulkan_common/vma.h"
+#include "video_core/readback_diagnostics.h"
 #include "video_core/vulkan_common/vulkan_device.h"
 #include "video_core/vulkan_common/vulkan_memory_allocator.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
@@ -265,7 +266,8 @@ vk::Image MemoryAllocator::CreateImage(const VkImageCreateInfo &ci, bool dedicat
         }
     }
     // Temporary per-process allocation evidence, kept across the crash handler's restart.
-    if (result != VK_SUCCESS || alloc_info.size >= (8ULL << 20)) {
+    if (VideoCommon::ReadbackDiagnostics::Enabled() &&
+        (result != VK_SUCCESS || alloc_info.size >= (8ULL << 20))) {
         static std::mutex probe_mutex;
         static unsigned probe_rows{};
         std::lock_guard probe_lock{probe_mutex};
@@ -400,7 +402,8 @@ vk::Buffer MemoryAllocator::CreateBuffer(const VkBufferCreateInfo &ci, MemoryUsa
         host_ci.memoryTypeBits = 0;
         result = vmaCreateBuffer(allocator, &ci, &host_ci, &handle, &allocation, &alloc_info);
     }
-    if (ci.size >= (64ULL << 20) || result != VK_SUCCESS) {
+    if (VideoCommon::ReadbackDiagnostics::Enabled() &&
+        (ci.size >= (64ULL << 20) || result != VK_SUCCESS)) {
         char path[160];
         std::snprintf(path, sizeof(path), "/data/eglantineps5/logs/mkw-buffer-alloc-%d.tsv", getpid());
         if (std::FILE* file = std::fopen(path, "a")) {
