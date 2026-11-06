@@ -2206,9 +2206,6 @@ private:
 
     void Start(HLERequestContext& ctx) {
         Log(ctx, "start");
-        if (Nx2VideoTraceEnabled()) {
-            LOG_INFO(Service, "nx2:vdec trace start syncpoint={}", m_syncpoint);
-        }
         m_ready->SetRunning(system.Kernel(), true);
         m_ready->Signal(system.Kernel());
         TipcReplyWords(ctx, {});
@@ -2378,13 +2375,6 @@ private:
         m_ready->SetRunning(system.Kernel(), false);
         {
             std::scoped_lock lk{m_mutex};
-            if (Nx2VideoTraceEnabled()) {
-                LOG_INFO(Service,
-                         "nx2:vdec trace finalize syncpoint={} inputs={} decoded={} outputs={} "
-                         "decoded_frames={} frames_out={} eos={} eos_queued={}",
-                         m_syncpoint, m_inputs.size(), m_decoded.size(), m_outputs.size(),
-                         m_decoded_frames, m_frames_out, m_stream_ended, m_end_queued);
-            }
             CompleteHandedFences();
         }
         TipcReplyWords(ctx, {});
