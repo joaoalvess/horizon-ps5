@@ -97,7 +97,7 @@ TEST_CASE("Ampere uniform immediate shifts allocate high uniform registers", "[v
     auto instruction = Clamped;
     instruction.words[0] = (instruction.words[0] & ~0xff0000U) | (28U << 16);
     instruction.words[2] = (instruction.words[2] & ~255U) | 29U;
-    const auto first = Shader::Ampere::LowerToMaxwellWith(std::array{instruction, Exit}, 0);
+    const auto first = Shader::Ampere::LowerToMaxwellWith(std::array{instruction, Exit}, false, false, 0);
     REQUIRE_FALSE(first);
     REQUIRE(first.high_uniform_registers == 2);
     const auto lowered = LowerToMaxwell(std::array{instruction, Exit});
