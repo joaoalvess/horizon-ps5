@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <cstdlib>
+#include <unordered_map>
 
 #include "common/assert.h"
 #include "common/logging.h"
@@ -72,6 +73,37 @@ void DrainBack() {
     VideoCommon::GpuSplit::Get().Drain();
 }
 
+// Where the last release of each semaphore word was queued for the back (every channel's puller
+// runs on the front, so one table without a lock). An acquire whose word is not met yet waits
+// for the back only up to that release instead of everything queued: at Mario Kart World's
+// title 63% of acquires waited for a queued release (28% of the front thread's wall time).
+// It measured no frame rate gain at that title, so it is opt-in: EDEN_NX2_ACQUIRE_DRAIN_TO_RELEASE=1.
+std::unordered_map<GPUVAddr, u64> g_release_positions;
+
+void NoteRelease(GPUVAddr address) {
+    if (auto& split = VideoCommon::GpuSplit::Get(); split.Active()) {
+        g_release_positions[address & ~GPUVAddr{3}] = split.WritePosition();
+    }
+}
+
+void DrainBackToRelease(GPUVAddr address) {
+    static const bool to_release = [] {
+        const char* value = std::getenv("EDEN_NX2_ACQUIRE_DRAIN_TO_RELEASE");
+        return value != nullptr && value[0] == '1';
+    }();
+    auto& split = VideoCommon::GpuSplit::Get();
+    if (!to_release || !split.Active()) {
+        DrainBack();
+        return;
+    }
+    const auto it = g_release_positions.find(address & ~GPUVAddr{3});
+    if (it == g_release_positions.end()) {
+        DrainBack();
+        return;
+    }
+    split.DrainTo(it->second);
+}
+
 } // Anonymous namespace
 
 bool Puller::PendingAcquire::Matches(u32 current) const {
@@ -97,7 +129,7 @@ bool Puller::CanResumeAcquire(DmaPusher& dma_pusher) {
         pending_acquire->Matches(dma_pusher.memory_manager.Read<u32>(pending_acquire->address))) {
         return true;
     }
-    DrainBack();
+    DrainBackToRelease(pending_acquire->address);
     const u32 current = ReadSemaphoreWord(dma_pusher, pending_acquire->address);
     if (Nx2SemaphoreWaiters::Get().Latched(this)) {
         if (static std::atomic<u32> rescued{};
@@ -245,6 +277,7 @@ void Puller::ProcessSemaphoreTriggerMethod(DmaPusher& dma_pusher) {
         OnBack([rasterizer = dma_pusher.rasterizer, sequence_address, properties, payload] {
             rasterizer->Query(sequence_address, VideoCommon::QueryType::Payload, properties, payload, 0);
         });
+        NoteRelease(sequence_address);
     } else if (g_nx2_ampere) {
         // Switch 2 waits on semaphores the CPU (or another channel) releases, e.g. once it has
         // written the commands this channel runs next: suspend the channel until the value is
@@ -262,14 +295,36 @@ void Puller::ProcessSemaphoreTriggerMethod(DmaPusher& dma_pusher) {
             return;
         }
         VideoCommon::Nx2Profile::Add(VideoCommon::Nx2Profile::Counter::AcquireChecks, 1);
+        // Where acquires end (logged per 4,000): met by the guest's word, met once the back was
+        // drained (a release was queued there), or left pending for the GPU.
+        struct AcquireStats {
+            u64 checks{}, raw{}, drained_waits{}, drained_met{}, pending{};
+        };
+        static AcquireStats acquire_stats;
+        ++acquire_stats.checks;
         if (AcquireChecksRawWordFirst() &&
             acquire.Matches(dma_pusher.memory_manager.Read<u32>(acquire.address))) {
+            ++acquire_stats.raw;
             return;
         }
-        DrainBack();
+        {
+            auto& split = VideoCommon::GpuSplit::Get();
+            if (split.Active() && split.ConsumedPosition() < split.WritePosition()) {
+                ++acquire_stats.drained_waits;
+            }
+        }
+        DrainBackToRelease(acquire.address);
+        if (acquire_stats.checks % 4000 == 0) {
+            LOG_INFO(HW_GPU, "Semaphore acquires: {} checked, {} met by the guest word, {} waited for "
+                     "the back, {} met after it, {} left pending for the GPU",
+                     acquire_stats.checks, acquire_stats.raw, acquire_stats.drained_waits,
+                     acquire_stats.drained_met, acquire_stats.pending);
+        }
         if (acquire.Matches(ReadSemaphoreWord(dma_pusher, acquire.address))) {
+            ++acquire_stats.drained_met;
             return;
         }
+        ++acquire_stats.pending;
         // The clock is only for the delayed-wait warning. Already-satisfied
         // acquires must not pay for a host clock query on every GPU command.
         acquire.since = std::chrono::steady_clock::now();
@@ -342,6 +397,7 @@ void Puller::ProcessSemaphoreRelease(DmaPusher& dma_pusher) {
         rasterizer->Query(sequence_address, VideoCommon::QueryType::Payload,
                           VideoCommon::QueryPropertiesFlags::IsAFence, payload, 0);
     });
+    NoteRelease(sequence_address);
 }
 
 void Puller::ProcessSemaphoreAcquire(DmaPusher& dma_pusher) {
@@ -371,6 +427,7 @@ void Puller::ProcessSemaphoreExecute(DmaPusher& dma_pusher, u32 argument) {
             rasterizer->Query(address, VideoCommon::QueryType::Payload,
                               VideoCommon::QueryPropertiesFlags::IsAFence, payload, 0);
         });
+        NoteRelease(address);
         return;
     }
     // Acquires: check once after flushing pending fences; never block the GPU thread on them.

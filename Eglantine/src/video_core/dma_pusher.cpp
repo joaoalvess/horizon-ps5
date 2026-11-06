@@ -911,13 +911,81 @@ void DmaPusher::FlushGpuWrittenCommands(GPUVAddr address, size_t size) {
     if (!Tegra::g_nx2_ampere.load(std::memory_order_relaxed) || size == 0) {
         return;
     }
+    // A list on a GPU-written page waited for the back before every read: at Mario Kart World's
+    // title that was 13,000 waits a second with the back about 57 words behind (the two threads
+    // ran in lockstep), and in 240,000 waits no page of a list was ever marked by work the back
+    // ran during the wait: those lists were written once while the scene loaded and never again.
+    // While loading, a list is read right after the dispatch that fills it, which may still be
+    // queued on the back (the page's mark then comes too late for any check): a page marked
+    // within the last EDEN_NX2_LIST_RECENT_WORDS of ring traffic (4M, about ten frames) still
+    // waits, as does a list that is dirty in the caches (its flush reads back through the back's
+    // scheduler, which the back must not be using) or has a noted writer queued. Logged per
+    // 2,000 lists. EDEN_NX2_LIST_DRAIN=1 restores the wait before every such list; =0 never
+    // waits (experiment: the flush then races the back). Skipping the waits measured no frame
+    // rate gain at that title (the guest's own frame loop sets its frame time), so the wait before
+    // every such list stays the default; EDEN_NX2_LIST_DRAIN=recent turns the gate on.
+    static const int list_drain = [] {
+        const char* value = std::getenv("EDEN_NX2_LIST_DRAIN");
+        if (value == nullptr) return 1;
+        if (value[0] == '0') return 0;
+        return value[0] == '1' ? 1 : 2;
+    }();
+    static const u64 recent_words = [] {
+        const char* value = std::getenv("EDEN_NX2_LIST_RECENT_WORDS");
+        return value != nullptr ? std::strtoull(value, nullptr, 10) : (u64{1} << 22);
+    }();
+    struct ListStats {
+        u64 lists{}, waited{}, words{}, needed{}, writer_ahead{}, dirty{}, skipped{};
+    };
+    static ListStats stats;
+    const auto translate = [&](GPUVAddr page) { return memory_manager.GpuToCpuAddress(page); };
+    const auto pages_marked_after = [&](u64 position) {
+        constexpr GPUVAddr mask = (GPUVAddr{1} << Nx2WrittenPageBits) - 1;
+        const GPUVAddr last = address + size - 1;
+        for (GPUVAddr page = address & ~mask;; page += mask + 1) {
+            if (const auto device = translate(page); device && Nx2PageStamp(*device) > position) {
+                return true;
+            }
+            if (page == (last & ~mask)) return false;
+        }
+    };
     Nx2SynchronizeGpuWrittenCommands(address, size,
-        [] {
-            if (auto& split = VideoCommon::GpuSplit::Get(); split.Active()) split.DrainToLastWriter();
+        [&] {
+            auto& split = VideoCommon::GpuSplit::Get();
+            if (!split.Active()) return;
+            const u64 consumed = split.ConsumedPosition();
+            const u64 write = split.WritePosition();
+            ++stats.lists;
+            if (consumed < write) {
+                ++stats.waited;
+                stats.words += write - consumed;
+                if (split.LastWriterPosition() > consumed) ++stats.writer_ahead;
+            }
+            const bool stamped = pages_marked_after(consumed);
+            const bool recent = list_drain == 2 && !stamped &&
+                pages_marked_after(consumed > recent_words ? consumed - recent_words : 0);
+            const bool writer_queued = split.LastWriterPosition() > consumed;
+            const bool dirty = list_drain == 2 && !stamped && !recent && !writer_queued &&
+                memory_manager.IsMemoryDirty(address, size, VideoCommon::CacheType::BufferCache);
+            if (list_drain == 1 ||
+                (list_drain == 2 && (stamped || recent || writer_queued || dirty))) {
+                split.DrainToLastWriter();
+            } else {
+                ++stats.skipped;
+            }
+            if (consumed < write && pages_marked_after(consumed)) ++stats.needed;
+            if (stats.lists % 2000 == 0) {
+                LOG_INFO(HW_GPU, "GPU-written lists: {} checked, {} waited for the back ({} words each), "
+                         "{} needed (a page marked during the wait), {} had a noted writer queued, "
+                         "{} dirty, {} skipped",
+                         stats.lists, stats.waited, stats.waited ? stats.words / stats.waited : 0,
+                         stats.needed, stats.writer_ahead, stats.dirty, stats.skipped);
+            }
         },
-        [&](GPUVAddr page) { return memory_manager.GpuToCpuAddress(page); },
+        translate,
         [&] {
             if (memory_manager.IsMemoryDirty(address, size, VideoCommon::CacheType::BufferCache)) {
+                ++stats.dirty;
                 memory_manager.FlushRegion(address, size, VideoCommon::CacheType::BufferCache);
             }
         });

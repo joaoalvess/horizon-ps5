@@ -46,6 +46,17 @@ inline bool Nx2NeedsBufferDownloads() {
 // reads the command list. One bit per 4 KiB of the 36-bit device address space (2 MiB).
 inline constexpr u64 Nx2WrittenPageBits = 12;
 inline std::array<std::atomic<u64>, (u64{1} << (36 - Nx2WrittenPageBits)) / 64> g_nx2_gpu_written_pages{};
+// The split's back thread's position in its ring (words executed so far), and per page (hashed:
+// a collision only makes a stamp later than it is) the position the back was at when it last
+// marked the page: whether a command list's pages were written by work the front already saw
+// the back finish (dma_pusher.cpp, FlushGpuWrittenCommands).
+inline std::atomic<u64> g_nx2_back_position{};
+inline constexpr u64 Nx2PageStampBits = 20;
+inline std::array<std::atomic<u64>, u64{1} << Nx2PageStampBits> g_nx2_page_stamps{};
+[[nodiscard]] inline u64 Nx2PageStamp(u64 device_address) {
+    const u64 page = device_address >> Nx2WrittenPageBits;
+    return g_nx2_page_stamps[page & ((u64{1} << Nx2PageStampBits) - 1)].load(std::memory_order_relaxed);
+}
 
 inline void Nx2MarkGpuWritten(u64 device_address, u64 size) {
     if (size == 0) {
@@ -54,6 +65,15 @@ inline void Nx2MarkGpuWritten(u64 device_address, u64 size) {
     const u64 last = std::min<u64>((device_address + size - 1) >> Nx2WrittenPageBits,
                                    g_nx2_gpu_written_pages.size() * 64 - 1);
     const u64 first = device_address >> Nx2WrittenPageBits;
+    if (const u64 position = g_nx2_back_position.load(std::memory_order_relaxed); position != 0) {
+        constexpr u64 stamp_mask = (u64{1} << Nx2PageStampBits) - 1;
+        for (u64 page = first; page <= last && page - first < (u64{1} << Nx2PageStampBits); ++page) {
+            auto& stamp = g_nx2_page_stamps[page & stamp_mask];
+            if (stamp.load(std::memory_order_relaxed) < position) {
+                stamp.store(position, std::memory_order_relaxed);
+            }
+        }
+    }
     for (u64 index = first / 64; first <= last && index <= last / 64; ++index) {
         const u64 low = index == first / 64 ? first % 64 : 0;
         const u64 high = index == last / 64 ? last % 64 : 63;
@@ -69,6 +89,9 @@ inline void Nx2MarkGpuWritten(u64 device_address, u64 size) {
 inline void Nx2ClearGpuWrittenPages() {
     for (auto& word : g_nx2_gpu_written_pages) {
         word.store(0, std::memory_order_relaxed);
+    }
+    for (auto& stamp : g_nx2_page_stamps) {
+        stamp.store(0, std::memory_order_relaxed);
     }
 }
 

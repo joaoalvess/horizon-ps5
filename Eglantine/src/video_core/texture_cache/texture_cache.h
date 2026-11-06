@@ -131,6 +131,16 @@ TextureCache<P>::TextureCache(Runtime& runtime_, Tegra::MaxwellDeviceMemoryManag
     }
 }
 
+namespace {
+[[nodiscard]] inline bool CorruptDeletedViewIds() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("EDEN_NX2_TC_CORRUPT_IDS");
+        return value != nullptr && value[0] == '1';
+    }();
+    return enabled;
+}
+} // namespace
+
 template <class P>
 void TextureCache<P>::RunGarbageCollector() {
     const u64 probe_initial_usage = total_used_memory;
@@ -2265,9 +2275,15 @@ void TextureCache<P>::InvalidateScale(Image& image) {
     for (size_t c : active_channel_ids) {
         auto& channel_info = channel_storage[c];
 
-        if constexpr (ENABLE_VALIDATION)
-            for (auto& e : channel_info.image_view_ids)
-                e.second = CORRUPT_ID;
+        // Walks every TIC index the channel ever read: 8% of the split's back thread at Mario
+        // Kart World's title, where a texture is deleted most frames. The tables are invalidated
+        // below, so the stale ids are never read; EDEN_NX2_TC_CORRUPT_IDS=1 keeps the walk.
+        if constexpr (ENABLE_VALIDATION) {
+            if (CorruptDeletedViewIds()) {
+                for (auto& e : channel_info.image_view_ids)
+                    e.second = CORRUPT_ID;
+            }
+        }
         channel_info.graphics_image_table.Invalidate();
         channel_info.compute_image_table.Invalidate();
     }
@@ -3737,9 +3753,15 @@ void TextureCache<P>::DeleteImage(ImageId image_id, bool immediate_delete) {
     }
     for (size_t c : active_channel_ids) {
         auto& channel_info = channel_storage[c];
-        if constexpr (ENABLE_VALIDATION)
-            for (auto& e : channel_info.image_view_ids)
-                e.second = CORRUPT_ID;
+        // Walks every TIC index the channel ever read: 8% of the split's back thread at Mario
+        // Kart World's title, where a texture is deleted most frames. The tables are invalidated
+        // below, so the stale ids are never read; EDEN_NX2_TC_CORRUPT_IDS=1 keeps the walk.
+        if constexpr (ENABLE_VALIDATION) {
+            if (CorruptDeletedViewIds()) {
+                for (auto& e : channel_info.image_view_ids)
+                    e.second = CORRUPT_ID;
+            }
+        }
         channel_info.graphics_image_table.Invalidate();
         channel_info.compute_image_table.Invalidate();
     }

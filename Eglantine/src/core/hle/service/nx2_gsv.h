@@ -8,6 +8,7 @@
 #include <array>
 #include <thread>
 #include <chrono>
+#include <deque>
 #include <condition_variable>
 #include <cstring>
 #include <set>
@@ -1305,18 +1306,22 @@ private:
         // while the GPU thread runs frame N (the console keeps several frames in flight). Waiting
         // for this frame serialized the two: 8-56 ms of every 34-105 ms frame on title 1.
         // EDEN_NX2_FRAMES_AHEAD=0 restores the wait for the current frame.
-        static const bool frames_ahead = [] {
+        // EDEN_NX2_FRAMES_AHEAD=N (1): the present waits for the fence of the frame N presents
+        // back, so the game keeps N frames in flight (its swapchain has three images).
+        static const size_t frames_ahead = [] {
             const char* value = std::getenv("EDEN_NX2_FRAMES_AHEAD");
-            return value == nullptr || value[0] != '0';
+            return value != nullptr ? static_cast<size_t>(std::strtoul(value, nullptr, 10)) : size_t{1};
         }();
         const auto entered = std::chrono::steady_clock::now();
-        if (frames_ahead) {
-            LOG_DEBUG(Service, "nx2:vi2 present #{} fence ({}, {:#x}), waiting for ({}, {:#x}); now {:#x}",
-                      m_presents, ~w[22], w[24], m_previous_fence_id, m_previous_fence_value,
-                      ~w[22] < 192 ? system.Host1x().GetSyncpointManager().GetGuestSyncpointValue(~w[22]) : 0U);
-            WaitForFrame(m_previous_fence_id, m_previous_fence_value);
-            m_previous_fence_id = ~w[22];
-            m_previous_fence_value = w[24];
+        if (frames_ahead != 0) {
+            m_pending_frame_fences.emplace_back(~w[22], w[24]);
+            while (m_pending_frame_fences.size() > frames_ahead) {
+                const auto [fence_id, fence_value] = m_pending_frame_fences.front();
+                m_pending_frame_fences.pop_front();
+                LOG_DEBUG(Service, "nx2:vi2 present #{} fence ({}, {:#x}), waiting for ({}, {:#x})",
+                          m_presents, ~w[22], w[24], fence_id, fence_value);
+                WaitForFrame(fence_id, fence_value);
+            }
         } else {
             WaitForFrame(~w[22], w[24]);
         }
@@ -1372,8 +1377,7 @@ private:
         u32 presents{};
         std::chrono::steady_clock::time_point last_present{};
     } m_stats{};
-    u32 m_previous_fence_id{~0U}; // none yet (WaitForFrame ignores ids >= 192)
-    u32 m_previous_fence_value{};
+    std::deque<std::pair<u32, u32>> m_pending_frame_fences; // (fence id, value) of presents not waited for
 
     // The console flips one frame per 60 Hz vblank and keeps the rest queued, so a game can't
     // present faster than that. Every slot is reported free here: hold each present until the

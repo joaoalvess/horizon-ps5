@@ -229,7 +229,10 @@ void GpuSplit::DrainToLastWriter() {
         Drain();
         return;
     }
-    const u64 position = last_writer_position;
+    DrainTo(last_writer_position);
+}
+
+void GpuSplit::DrainTo(u64 position) {
     consumed_cache = consumed.load(std::memory_order_acquire);
     if (consumed_cache >= position) {
         return;
@@ -378,6 +381,7 @@ void GpuSplit::BackLoop(std::stop_token stop_token) {
         g_back_busy.store(true, std::memory_order_relaxed);
         while (read_position != available) {
             const size_t index = read_position & RingMask;
+            Tegra::g_nx2_back_position.store(read_position, std::memory_order_relaxed);
             const size_t size = Execute(&ring[index]);
             read_position += size != 0 ? size : RingWords - index;
             // Hand ring space back now and then while working through a long batch.

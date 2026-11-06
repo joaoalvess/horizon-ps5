@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <bit>
 #include <cassert>
+#include <cstdlib>
 #include <cstring>
 #include <span>
 #include <vector>
@@ -2043,8 +2044,31 @@ bool IsOpaque(std::span<const uint8_t> data) {
     // (10), LDR RGBA (12, 13) and HDR RGBA (14, 15).
     constexpr u32 AlphaModes = (1U << 4) | (1U << 5) | (1U << 10) | (1U << 12) | (1U << 13) |
                                (1U << 14) | (1U << 15);
+    // Most blocks have one partition: bits 0-10 hold the block mode, 11-12 the partition count
+    // less one and 13-16 the endpoint mode, so they are told from one word without the block
+    // decode below (which was 2.7% of the GPU thread at Mario Kart World's title, one texture
+    // a frame). EDEN_NX2_ASTC_OPAQUE_SLOW=1 decodes every block.
+    static const bool decode_every_block = [] {
+        const char* value = std::getenv("EDEN_NX2_ASTC_OPAQUE_SLOW");
+        return value != nullptr && value[0] == '1';
+    }();
     for (size_t offset = 0; offset + 16 <= data.size(); offset += 16) {
         const std::span<const u8> block = data.subspan(offset, 16);
+        if (!decode_every_block) {
+            u32 head;
+            std::memcpy(&head, block.data(), sizeof(head));
+            const u32 mode = head & 0x7ff;
+            if ((mode & 0x1ff) != 0x1fc && ((head >> 11) & 3) == 0) {
+                // Reserved modes decode to the opaque error colour; the rest tell by the mode.
+                if ((mode & 0xf) == 0 || ((mode & 3) == 0 && (mode & 0x1c0) == 0x1c0)) {
+                    continue;
+                }
+                if ((AlphaModes >> ((head >> 13) & 0xf)) & 1) {
+                    return false;
+                }
+                continue;
+            }
+        }
         InputBitStream strm(block);
         const TexelWeightParams params = DecodeBlockInfo(strm);
         if (params.m_bError) {

@@ -180,6 +180,7 @@ public:
     /// Temporary decode images, freed once the GPU is past `tick`.
     struct PendingTranscode {
         u64 tick;
+        u64 bytes; // the decode image's RGBA8 size, for a bounded reclaim under memory pressure
         vk::Image image;
         std::vector<vk::ImageView> views;
     };

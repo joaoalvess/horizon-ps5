@@ -3953,8 +3953,13 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
     // The decode image lives only until the encode ran. Sub-allocated, not dedicated: streaming
     // worlds transcode ~100 textures a second, and a vkAllocateMemory plus a vkFreeMemory for each
     // took several percent of the GPU thread. VMA still gives large ones their own block.
+    u64 decode_bytes = 0;
+    for (u32 level = 0; level < levels; ++level) {
+        decode_bytes += u64{(std::max)(width >> level, 1U)} * (std::max)(height >> level, 1U) * 4;
+    }
     PendingTranscode pending{
         .tick = 0,
+        .bytes = decode_bytes,
         .image = memory_allocator.CreateImage(VkImageCreateInfo{
             .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
             .pNext = nullptr,

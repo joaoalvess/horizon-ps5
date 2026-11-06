@@ -110,6 +110,13 @@ public:
     }
     /// Waits until the back executed the last entry that could have written guest memory.
     void DrainToLastWriter();
+    /// Waits until the back executed everything sent before ring position `position`.
+    void DrainTo(u64 position);
+    /// Ring positions (words sent, words the back finished, the last noted writer): what a
+    /// command list on a GPU-written page would wait for (dma_pusher.cpp diagnostics).
+    [[nodiscard]] u64 WritePosition() const { return write_position; }
+    [[nodiscard]] u64 ConsumedPosition() const { return consumed.load(std::memory_order_acquire); }
+    [[nodiscard]] u64 LastWriterPosition() const { return last_writer_position; }
 
 private:
     enum class Kind : u64 {
