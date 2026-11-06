@@ -183,8 +183,8 @@ ComputePipeline::ComputePipeline(const Device& device_, Scheduler& scheduler, vk
                 if (std::string_view{statistic.name} == "Instructions") instructions = value;
                 line += fmt::format(" {}={}", statistic.name, value);
             }
-            if (instructions >= 5000) {
-                LOG_WARNING(Render_Vulkan, "NX2_PIPELINE_STATS compute{}", line);
+            if (instructions >= 5000 || std::getenv("EDEN_NX2_PIPELINE_STATS_ALL") != nullptr) {
+                LOG_WARNING(Render_Vulkan, "NX2_PIPELINE_STATS compute hash={:016x}{}", shader_hash, line);
             }
         }
         std::scoped_lock lock{build_mutex};
