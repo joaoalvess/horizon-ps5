@@ -963,13 +963,12 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
             const u32 high = insn.Bits(64, 8); // destination of the third and fourth channels
             // Bit 90 (word 2 bit 26) is the sign of the LOD the emit below already copies.
             // Bits 72-75 are the channel mask: the first two enabled channels go to Rd, Rd+1, the
-            // others to the second destination.
-            const u32 mask = insn.Bits(72, 4);
-            const u32 channels = static_cast<u32>(std::popcount(mask));
-            if ((insn.words[2] & ~(0xffU | 0xf00U | (1U << 26))) != 0x001e0000 || insn.Bits(59, 2) ||
-                mask == 0 || (channels > 2) != (high != 255) ||
+            // others to the second destination (RZ drops them; a third channel alone may be in an
+            // odd register).
+            const u32 mask = insn.Bits(72, 4), channels = static_cast<u32>(std::popcount(mask));
+            if ((insn.words[2] & ~(0xfffU | (1U << 26))) != 0x001e0000 || mask == 0 || insn.Bits(59, 2) ||
                 (dimension != 1 && dimension != 5) || binding >= 18 || offset > 0x1fff ||
-                (channels > 1 && (dest & 1)) || dest >= 248 ||
+                (channels > 1 && (dest & 1)) || dest >= 248 || (channels <= 2 && high != 255) ||
                 (high != 255 && ((channels > 3 && (high & 1)) || high >= 248)) ||
                 coordinates >= 248 || derivatives >= 247)
                 return fail(index, "native gradient texture mode");
@@ -986,6 +985,7 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
                  (u64{offset} << 36) | (u64{insn.Bits(90, 1)} << 49) | (u64{7} << 51));
             if (!consecutive) {
                 for (u32 i = 0; i < channels; ++i) {
+                    if (i >= 2 && high == 255) break;
                     const u32 to = i < 2 ? static_cast<u32>(dest) + i : high + (i - 2);
                     emit(0x5c98000000000000ULL | predicate | to | (u64{15} << 39) | (u64{248 + i} << 20));
                 }
