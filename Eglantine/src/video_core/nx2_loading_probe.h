@@ -10,7 +10,7 @@ struct Channel {
     void Mark(const char* name, u64 value = 0) {
         argument.store(value, std::memory_order_relaxed);
         phase.store(name, std::memory_order_relaxed);
-        serial.fetch_add(1, std::memory_order_relaxed);
+        serial.store(serial.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
     }
 };
 inline Channel gpu, compiler, driver, record, queue, wait, command, blit, writeback, enqueue;
