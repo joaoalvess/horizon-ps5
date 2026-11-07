@@ -8,6 +8,7 @@
 #if __has_include(<ps5_opengl_display_modes.h>)
 #include <ps5_opengl_display_modes.h>  // the output's refresh rate (display_refresh.h)
 #endif
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -23,6 +24,7 @@
 #include "diagnostics.h"
 #include "display_refresh.h"
 #include "graphics.h"
+#include "common/logging.h"
 #include "common/scope_exit.h"
 #include "core/core.h"
 #include "core/frontend/graphics_context.h"
@@ -676,6 +678,9 @@ void GraphicsWindow::OnFrameDisplayed() {
         } else {
             ++frame_sample_count;
             frame_sample_worst = std::max(frame_sample_worst, now - frame_sample_last);
+            if (frame_sample_count <= frame_sample_intervals.size())
+                frame_sample_intervals[frame_sample_count - 1] =
+                    static_cast<float>((now - frame_sample_last) * 1000.0);
 #ifdef EDEN_DEV_PROFILE
             // Present intervals by vsync multiple: a 60 FPS title that misses by a little
             // shows up in the 2-vsync bucket, a slow one across all of them. "half" counts the
@@ -694,6 +699,19 @@ void GraphicsWindow::OnFrameDisplayed() {
                     frame_sample_count / (now - frame_sample_start),
                     frame_sample_worst * 1000.0, frame_total, Display::skipped_frames.load(),
                     Display::game_millihertz.load() / 1000.0);
+                const auto sampled = frame_sample_intervals.begin() +
+                    std::min<std::ptrdiff_t>(frame_sample_count, frame_sample_intervals.size());
+                const auto percentile = [&](double fraction) -> double {
+                    if (sampled == frame_sample_intervals.begin()) return 0.0;
+                    const auto at = frame_sample_intervals.begin() +
+                        static_cast<std::ptrdiff_t>((sampled - frame_sample_intervals.begin() - 1) * fraction);
+                    std::nth_element(frame_sample_intervals.begin(), at, sampled);
+                    return *at;
+                };
+                const double p50 = percentile(0.5), p99 = percentile(0.99);
+                LOG_INFO(Frontend, "EDEN_FRAME fps={:.1f} p50_ms={:.1f} p99_ms={:.1f} worst_ms={:.1f} total={} not_shown={}",
+                         frame_sample_count / (now - frame_sample_start), p50, p99, frame_sample_worst * 1000.0,
+                         frame_total, Display::skipped_frames.load());
 #ifdef EDEN_DEV_PROFILE
                 std::printf("EDEN_VULKAN_INTERVALS v1=%u v2=%u v3=%u v4plus=%u half=%u\n", interval_hist[0],
                             interval_hist[1], interval_hist[2], interval_hist[3], interval_hist[4]);
