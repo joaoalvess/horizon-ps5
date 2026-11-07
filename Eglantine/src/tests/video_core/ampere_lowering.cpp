@@ -219,4 +219,38 @@ TEST_CASE("Ampere programs go on past an EXIT that a branch jumps over", "[video
     REQUIRE(static_cast<bool>(lowered));
     REQUIRE(lowered.source_size == sizeof(code));
 }
+
+TEST_CASE("Ocarina LDG into a uniform mirror register lowers through a shadow bank",
+          "[video_core][ampere]") {
+    using Shader::Ampere::NativeRegisterCopy;
+    // LDG.E.64 R228, desc[UR4] (Ocarina's vertex shaders): R228 is UR12's mirror, so the pair
+    // lives in IR bank 1 and the load writes a borrowed quartet below R180 (R176).
+    const Instruction load{{0xffe47981, 0x00002004, 0x0c1e8b00, 0x000f6800}};
+    const auto lowered = LowerToMaxwell(std::array{load, EXIT});
+    INFO(lowered.error);
+    REQUIRE(static_cast<bool>(lowered));
+    const auto& words = lowered.instructions;
+    const auto has = [&](u64 word) { return std::find(words.begin(), words.end(), word) != words.end(); };
+    for (u32 i = 0; i < 4; ++i) {
+        CHECK(has(NativeRegisterCopy(2, 176 + i, 0, 176 + i)));
+        CHECK(has(NativeRegisterCopy(0, 176 + i, 1, 228 + i)));
+        CHECK(has(NativeRegisterCopy(1, 228 + i, 0, 176 + i)));
+        CHECK(has(NativeRegisterCopy(0, 176 + i, 2, 176 + i)));
+    }
+    const u64 ldg = FindMaxwell(lowered, 0xeed, 52);
+    REQUIRE(ldg != 0);
+    CHECK((ldg & 0xff) == 176);
+    CHECK(((ldg >> 8) & 0xff) == 220); // UR4
+
+    // Without the uniform bank R246 and up are scratch and not quartet aligned: still rejected.
+    const Instruction scratch_mov{{0x00fa7802, 0x1234, 0x00000f00, 0}};
+    const auto scratch = LowerToMaxwell(std::array{scratch_mov, EXIT});
+    REQUIRE_FALSE(static_cast<bool>(scratch));
+    CHECK(scratch.error == "native program uses lowering scratch registers");
+    // An instruction whose register operands are not known to the shadowing stays rejected.
+    const Instruction texture{{0xe8e87b66, 0x10000cff, 0x009e01ff, 0x000f4200}};
+    const auto unknown = LowerToMaxwell(std::array{load, texture, EXIT});
+    REQUIRE_FALSE(static_cast<bool>(unknown));
+    CHECK(unknown.error == "native register shadowing mode");
+}
 } // namespace

@@ -185,6 +185,10 @@ u32 GenericEnvironment::TranslateProgramAddress(u32 address) const {
     return address;
 }
 
+bool GenericEnvironment::HasNativeInstructions() const {
+    return native_source_size || Shader::Ampere::HasNativeAddressMap(code);
+}
+
 bool GenericEnvironment::IsNativeProgram() const {
     return native_source_size != 0 || Shader::Ampere::HasNativeAddressMap(code);
 }
@@ -1092,6 +1096,10 @@ u32 FileEnvironment::TranslateProgramAddress(u32 address) const {
     if (Shader::Ampere::HasNativeAddressMap(code))
         throw Shader::RuntimeError("Invalid cached native indirect branch address {:#x}", address);
     return address;
+}
+
+bool FileEnvironment::HasNativeInstructions() const {
+    return Shader::Ampere::HasNativeAddressMap(code);
 }
 
 bool FileEnvironment::IsNativeProgram() const {

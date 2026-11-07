@@ -77,6 +77,9 @@ public:
 
     [[nodiscard]] virtual u32 TranslateProgramAddress(u32 address) const { return address; }
 
+    /// True for programs lowered from native (Switch 2) code.
+    [[nodiscard]] virtual bool HasNativeInstructions() const { return false; }
+
     /// A Switch 2 native program lowered to Maxwell instructions. Its storage buffer pointers are
     /// raw 8-byte arguments in constant buffers, without the NVN descriptor layout.
     [[nodiscard]] virtual bool IsNativeProgram() const { return false; }

@@ -67,6 +67,8 @@ public:
 
     [[nodiscard]] u32 TranslateProgramAddress(u32 address) const override;
 
+    [[nodiscard]] bool HasNativeInstructions() const override;
+
     [[nodiscard]] bool IsNativeProgram() const override;
 
     [[nodiscard]] bool IsCbufStorageBufferPointer(u32 index, u32 offset) override;
@@ -257,6 +259,8 @@ public:
     [[nodiscard]] u64 ReadInstruction(u32 address) override;
 
     [[nodiscard]] u32 TranslateProgramAddress(u32 address) const override;
+
+    [[nodiscard]] bool HasNativeInstructions() const override;
 
     [[nodiscard]] bool IsNativeProgram() const override;
 
