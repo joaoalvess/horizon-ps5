@@ -358,7 +358,7 @@ void Maxwell3D::ProcessDirtyRegisters(u32 method, u32 argument) {
 
 void Maxwell3D::ProcessMethodCall(u32 method, u32 argument, u32 nonshadow_argument, bool is_last_call) {
     if (GetNativeMacroEngine().native_turing && method == MAXWELL3D_REG_INDEX(clear_surface)) {
-        LOG_DEBUG(HW_GPU, "Native GPU surface clear: value={:#x}", argument);
+        LOG_TRACE(HW_GPU, "Native GPU surface clear: value={:#x}", argument);
     }
     switch (method) {
     case RootTables::SelectMethod:

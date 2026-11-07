@@ -281,7 +281,7 @@ void TextureCache<P>::RunGarbageCollector() {
         Configure(true);
         Collect();
     }
-    if (static u32 probe_rows{}; frame_tick % 30 == 0 && probe_rows++ < 256) {
+    if (static u32 probe_rows{}; frame_tick % 30 == 0 && (probe_deletes || probe_initial_usage >= expected_memory) && probe_rows++ < 256) {
         LOG_WARNING(HW_GPU, "MKW_GC frame={} usage={} expected={} critical={} scanned={} deletes={} estimated={} allocated={} costly_skips={} dirty_skips={} decoding_skips={}",
                     frame_tick, probe_initial_usage, expected_memory, critical_memory, probe_scanned,
                     probe_deletes, probe_estimated, probe_actual, probe_costly_skips, probe_dirty_skips,

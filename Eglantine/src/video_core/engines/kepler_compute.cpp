@@ -277,8 +277,8 @@ bool KeplerCompute::ProcessNativeMethod(Core::System& system, u32 method, u32 ar
             native_registers[0xc7]) << 8;
         const GPUVAddr program = (GPUVAddr{native_registers[0xc8 + 49] & 0x1ffff} << 32) |
             native_registers[0xc8 + 48];
-        const u32 control = native_registers[0xa7];
-        LOG_DEBUG(HW_GPU, "Native inline QMD: address={:#x}, program={:#x}, control={:#x}, grid={}/{}/{}",
+        [[maybe_unused]] const u32 control = native_registers[0xa7];
+        LOG_TRACE(HW_GPU, "Native inline QMD: address={:#x}, program={:#x}, control={:#x}, grid={}/{}/{}",
             address, program, control, native_registers[0xc8 + 12],
             native_registers[0xc8 + 13] & 0xffff, native_registers[0xc8 + 14] & 0xffff);
         if (static const bool diagnostics = std::getenv("EDEN_NATIVE_DRAW_DIAGNOSTICS") != nullptr;
@@ -403,7 +403,7 @@ bool KeplerCompute::ProcessNativeMethod(Core::System& system, u32 method, u32 ar
                 return true;
             }, [&](const auto& descriptor) { return DispatchNativeCompute(descriptor); });
         if (error.empty()) {
-            LOG_DEBUG(HW_GPU, "Native QMD control action={:#x}, QMD={:#x}", argument, qmd_address);
+            LOG_TRACE(HW_GPU, "Native QMD control action={:#x}, QMD={:#x}", argument, qmd_address);
             return true;
         }
         native_macro->native_execution_failed = true;
