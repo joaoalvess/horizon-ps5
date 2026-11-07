@@ -60,12 +60,13 @@ What the triage agents found that belongs to another subsystem's file, to the po
 | dj:55274de6af adds a seventh `scheduler.Wait` in `vk_buffer_cache.cpp`, which breaks `prepare-vulkan-port.py`'s count of six wait sites | gpu-vulkan |
 | Patch 0003 is in dj:34e1f691ae (PR #175): it is dropped once the submodule moves past it | cpu-jit |
 | NUP, upstream's single-file package for extracted games, is `skip` as a core change; supporting it in the launcher is a feature decision | loader-fs |
+| The pin's Ampere lowering tests (`ampere_f2i.cpp`, `ampere_kirby.cpp`, `ampere_integer_multiply.cpp`, `ampere_release_guards.cpp`, `ampere_release_f2i.cpp`, `ampere_uniform_lea.cpp`, run by `tools/check-nx2-core.py`) are in neither Djihads80's nor Lichii's branch, so no ported unit was run against them. On `horizon-v2` they refused 19 forms the units now lower: 18 on purpose (cc70030a81 updates the tests, unit by unit), and a TLD.SCR with bit 91, the uniform-handle flag, that 0xb66's path ignored (fixed in 9d6f094576). Found with a per-commit run of those tests over the 46 lowering commits (`/Volumes/Hangar/ps5/logs/test-bisect/`) | main thread |
 
 ## For the A/B
 
 | Finding | From |
 |---|---|
-| `main` (pin, shader cache version 25) and `v2` (dj nx2, 21) would delete each other's caches in `tools/mkw-bench-console.py`'s shared, warmed cache: take li:d1b7f69df7's versioned cache file names, or give each candidate its own cache, before trusting `v2` numbers | frontend-build |
+| `main` (pin, shader cache version 25) and `v2` would delete each other's caches in `tools/mkw-bench-console.py`'s shared, warmed cache. Resolved in `v2`: li#150 brought the versioned file names (`vulkan.fork-v28.bin`, `vulkan_pipelines.fork-v28.bin`), and a legacy file is adopted only at the same version, so `main`'s files stay as they are ([console-test.md](console-test.md#shader-caches)) | frontend-build, main thread |
 
 ## For delta.py
 
