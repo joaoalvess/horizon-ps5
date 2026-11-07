@@ -284,6 +284,9 @@ void Puller::ProcessSemaphoreTriggerMethod(DmaPusher& dma_pusher) {
             rasterizer->Query(sequence_address, VideoCommon::QueryType::Payload, properties, payload, 0);
         });
         NoteRelease(sequence_address);
+        if (auto& split = VideoCommon::GpuSplit::Get(); split.Active()) {
+            split.NoteRelease(sequence_address);
+        }
     } else if (g_nx2_ampere) {
         // Switch 2 waits on semaphores the CPU (or another channel) releases, e.g. once it has
         // written the commands this channel runs next: suspend the channel until the value is
