@@ -130,7 +130,9 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, bool
         for (u32 bit : {16U, 24U, 32U, 64U}) {
             // ISBEWR, RED and SURED also take data from bits 32-39, as RegisterPressure records.
             if (bit == 32 && insn.Bits(9, 3) != 1 && opcode != 0xb60 && opcode != 0xb66 && opcode != 0xf60 && opcode != 0xf66 &&
-                opcode != 0x988 && opcode != 0x927 && opcode != 0x98e && opcode != 0x59f) continue;
+                opcode != 0x988 && opcode != 0x927 && opcode != 0x98e && opcode != 0x59f && opcode != 0x986 &&
+                opcode != 0x589 && opcode != 0x9a8 && opcode != 0xb9b && opcode != 0xb63 && opcode != 0xf63 &&
+                opcode != 0xb69 && opcode != 0xf69 && opcode != 0xb6c) continue;
             const u32 reg = insn.Bits(bit, 8);
             if (reg >= (uses_uniform_bank ? 216U : 246U) && reg < 255) requires_shadow = true;
             else if (reg >= (uses_uniform_bank ? high_uniform_base : 246U) && reg < 255) return fail(index, "native program uses lowering scratch registers");
