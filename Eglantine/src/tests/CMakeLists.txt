@@ -11,6 +11,7 @@ add_executable(tests
     video_core/framebuffer_clear_layers.cpp
     video_core/framebuffer_limits.cpp
     video_core/pending_maps.cpp
+    video_core/native_qmd.cpp
     video_core/spirv_min_max_denorms.cpp
     video_core/virtual_range_cache.cpp
     common/bit_field.cpp
