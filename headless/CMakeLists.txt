@@ -2784,6 +2784,11 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PORT_ROOT}/sce
 write_derived("${PORT_BUILD_DIR}/version/app_version.h"
     "// Generated from sce_sys/param.json (contentVersion).\n#pragma once\n#define EDEN_APP_VERSION \"${app_version}\"\n")
 target_include_directories(eden-headless PRIVATE "${PORT_BUILD_DIR}/version")
+add_custom_target(eden-build-identity
+    COMMAND "${CMAKE_COMMAND}" "-DROOT=${PORT_ROOT}" "-DOUT=${PORT_BUILD_DIR}/version/build_identity.h"
+            -P "${EDEN_PORT_DIR}/build_identity.cmake"
+    BYPRODUCTS "${PORT_BUILD_DIR}/version/build_identity.h" VERBATIM)
+add_dependencies(eden-headless eden-build-identity)
 target_link_libraries(eden-headless PRIVATE core eden-pad)
 # A game's text entry on the PS5's own on-screen keyboard (system_keyboard.h, keyboard_applet.h).
 target_sources(eden-headless PRIVATE "${EDEN_PORT_DIR}/system_keyboard.cpp")

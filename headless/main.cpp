@@ -76,6 +76,7 @@ extern "C" size_t eden_heap_last_failure(unsigned*, size_t*);
 #include "crash_report.h"
 #include "eglantineps5/frontend.h"
 #include "eglantineps5/version.h"
+#include "build_identity.h"
 extern "C" void ps5_opengl_heap_snapshot(const char*, unsigned);
 extern "C" std::int64_t sceKernelGetDirectMemorySize();
 #else
@@ -247,6 +248,32 @@ static void UpdateGrips(Core::System& system, Eden::Pad& pad) {
                                       grip == Grip::sideways_right ? ": a right Joy-Con held sideways, turned for a DualSense held as usual" :
                                       grip == Grip::upright_left ? ": a left Joy-Con held upright; the shapes are its four buttons, the arrows and either stick its stick" :
                                                                    ": a right Joy-Con held upright; the shapes are its four buttons, the arrows and either stick its stick")).c_str());
+    }
+}
+
+extern char** environ;
+
+static void LogSessionHeader(Core::System& system, const char* guest) {
+#ifdef EDEN_DEV_PROFILE
+    constexpr const char* flavour = "dev";
+#else
+    constexpr const char* flavour = "release";
+#endif
+    LOG_INFO(Frontend, "EDEN_SESSION build app={} {} flavour={} compiled={}", Eden::kAppVersion,
+             EDEN_BUILD_IDENTITY, flavour, __DATE__ " " __TIME__);
+    LOG_INFO(Frontend, "EDEN_SESSION game title={:016X} path={}", system.GetApplicationProcessProgramID(),
+             guest ? guest : "");
+    for (char** entry = environ; entry && *entry; ++entry) {
+        const std::string_view text{*entry};
+        if (text.starts_with("EDEN_") || text.starts_with("RADV_") || text.starts_with("MESA_"))
+            LOG_INFO(Frontend, "EDEN_SESSION env {}", text);
+    }
+    for (const auto& [category, settings] : Settings::values.linkage.by_category) {
+        for (const auto* setting : settings) {
+            if (setting->Id() != Settings::values.eden_token.Id() &&
+                setting->ToString() != setting->DefaultToString())
+                LOG_INFO(Frontend, "EDEN_SESSION setting {}={}", setting->GetLabel(), setting->Canonicalize());
+        }
     }
 }
 
@@ -1465,6 +1492,7 @@ int main(int argc, char** argv) {
                         Eden::Report("history", "Could not save recent game");
                 }
 #endif
+                if (game) LogSessionHeader(system, guest);
                 passed(game ? "game_loaded" : "nro_loaded");
 #if defined(PS5_NATIVE) && (defined(EDEN_DEV_PROFILE) || defined(EDEN_DEV_ROM_ID))
                 if (dev_load_hang) {
