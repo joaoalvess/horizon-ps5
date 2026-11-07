@@ -62,6 +62,7 @@ add_executable(tests
     video_core/shader_reuse_environment.cpp
     video_core/spirv_storage_alignment.cpp
     video_core/blit_dither.cpp
+    video_core/geometry_layer_viewport_relative.cpp
     video_core/cooperative_matrix.cpp
     video_core/ampere_kirby.cpp
     video_core/ampere_geometry.cpp
