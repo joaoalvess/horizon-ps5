@@ -2,6 +2,7 @@
 #pragma once
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
@@ -41,8 +42,9 @@ public:
     Common::Input::DriverResult SetVibration(const PadIdentifier& identifier,
                                              const Common::Input::VibrationStatus& vibration) override;
     bool IsVibrationEnabled(const PadIdentifier&) override { return true; }
-    // The DualSense motor levels for a player when they changed since the last call: large (low
-    // frequency) and small (high frequency), 0-255.
+    // The DualSense motor levels for a player when they changed since the last call, or a stop once
+    // they have played 2 s with no new value, as Eden's SDL driver does: large (low frequency) and
+    // small (high frequency), 0-255.
     struct Rumble {
         u8 large = 0;
         u8 small = 0;
@@ -54,6 +56,8 @@ private:
         Common::Input::VibrationStatus left{};
         Common::Input::VibrationStatus right{};
         bool changed = false;
+        bool playing = false;
+        std::chrono::steady_clock::time_point updated{};
     };
     std::mutex rumble_mutex;
     std::array<Sides, kPlayers> rumble{};
@@ -123,6 +127,9 @@ private:
     u64 polls = 0, samples_read = 0, usable_samples = 0, intercepted_samples = 0, circle_samples = 0, read_errors = 0;
     u64 rumble_updates = 0, rumble_errors = 0;
     int rumble_last_error = 0;
+    std::chrono::steady_clock::time_point rumble_window{};
+    u8 rumble_large_max = 0, rumble_small_max = 0;
+    unsigned rumble_window_updates = 0, rumble_reports = 0;
     int last_result = 0;
 };
 

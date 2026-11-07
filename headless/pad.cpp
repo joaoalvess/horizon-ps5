@@ -16,6 +16,8 @@ namespace {
 struct LoginUserIdList {
     std::int32_t user_id[4];
 };
+constexpr std::chrono::milliseconds kRumbleMaxDuration{2000};
+constexpr unsigned kRumbleReports = 40;
 constexpr std::array<const char*, 8> kAbsentEngines{
     "keyboard", "mouse", "touch", "cemuhookudp", "tas", "camera", "virtual_amiibo", "joycon"};
 template <typename Device>
@@ -99,25 +101,30 @@ Common::Input::DriverResult PadEngine::SetVibration(const PadIdentifier& identif
     auto& sides = rumble[player];
     (identifier.pad == 2 ? sides.right : sides.left) = vibration;
     sides.changed = true;
+    sides.updated = std::chrono::steady_clock::now();
     return Common::Input::DriverResult::Success;
 }
 bool PadEngine::TakeRumble(std::size_t player, Rumble& out) {
     if (player >= kPlayers) return false;
     std::scoped_lock lock(rumble_mutex);
     auto& sides = rumble[player];
-    if (!sides.changed) return false;
+    if (!sides.changed) {
+        if (!sides.playing || std::chrono::steady_clock::now() - sides.updated < kRumbleMaxDuration) return false;
+        sides.left = {};
+        sides.right = {};
+        sides.playing = false;
+        out = {};
+        return true;
+    }
     sides.changed = false;
     // The console's HD rumble per side -> one DualSense: the low band drives the large motor and the
-    // high band the small one, with the amplitude curves of Eden's SDL driver.
-    const auto level = [](float amplitude, Common::Input::VibrationAmplificationType type) {
-        const float factor = type == Common::Input::VibrationAmplificationType::Linear ? 0.5f : 0.35f;
-        amplitude = std::clamp(amplitude, 0.0f, 1.0f);
-        return static_cast<u8>(std::lround((amplitude + std::pow(amplitude, factor)) * 0.5f * 255.0f));
+    // high band the small one, at the amplitude the game sends.
+    const auto level = [](float amplitude) {
+        return static_cast<u8>(std::lround(std::clamp(amplitude, 0.0f, 1.0f) * 255.0f));
     };
-    out.large = std::max(level(sides.left.low_amplitude, sides.left.type),
-                         level(sides.right.low_amplitude, sides.right.type));
-    out.small = std::max(level(sides.left.high_amplitude, sides.left.type),
-                         level(sides.right.high_amplitude, sides.right.type));
+    out.large = std::max(level(sides.left.low_amplitude), level(sides.right.low_amplitude));
+    out.small = std::max(level(sides.left.high_amplitude), level(sides.right.high_amplitude));
+    sides.playing = out.large != 0 || out.small != 0;
     return true;
 }
 
@@ -265,6 +272,22 @@ bool Pad::Poll() {
             const int result = scePadSetVibration(handle, &vibration);
             ++rumble_updates;
             if (result < 0) { ++rumble_errors; rumble_last_error = result; }
+            if (player == 0 && rumble_reports < kRumbleReports) {
+                const auto now = std::chrono::steady_clock::now();
+                rumble_large_max = std::max(rumble_large_max, rumble.large);
+                rumble_small_max = std::max(rumble_small_max, rumble.small);
+                ++rumble_window_updates;
+                if (now - rumble_window >= std::chrono::seconds{1}) {
+                    if (rumble_large_max != 0 || rumble_small_max != 0) {
+                        LOG_INFO(Input, "EDEN_RUMBLE updates={} large_max={} small_max={}", rumble_window_updates,
+                                 rumble_large_max, rumble_small_max);
+                        ++rumble_reports;
+                    }
+                    rumble_window = now;
+                    rumble_large_max = rumble_small_max = 0;
+                    rumble_window_updates = 0;
+                }
+            }
         }
         const int count = scePadRead(handle, samples.data(), samples.size());
         if (player == 0) last_result = count;
