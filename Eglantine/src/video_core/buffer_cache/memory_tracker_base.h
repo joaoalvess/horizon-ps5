@@ -153,6 +153,13 @@ public:
     }
 
     template <typename Func>
+    void ForEachPreflushableRange(VAddr query_cpu_range, u64 query_size, Func&& func) {
+        IteratePages<false>(query_cpu_range, query_size, [&func](Manager* manager, u64 offset, size_t size) {
+            manager->ForEachModifiedRange(Type::Preflushable, false, manager->cpu_addr + offset, size, func);
+        });
+    }
+
+    template <typename Func>
     void ForEachDownloadRangeAndClear(VAddr query_cpu_range, u64 query_size, Func&& func) {
         IteratePages<false>(query_cpu_range, query_size, [&func](Manager* manager, u64 offset, size_t size) {
             manager->ForEachModifiedRange(Type::GPU, true, manager->cpu_addr + offset, size, func);

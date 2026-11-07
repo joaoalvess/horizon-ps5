@@ -44,6 +44,7 @@
 #include "video_core/host1x/gpu_device_memory_manager.h"
 #include "video_core/host1x/host1x.h"
 #include "video_core/nx2.h"
+#include "video_core/nx2_profile.h"
 #include "video_core/rasterizer_download_area.h"
 
 extern "C" bool eden_published_semaphore_reads_enabled() __attribute__((weak));
@@ -955,6 +956,10 @@ struct Memory::Impl {
                 };
                 const auto [page, aliases] = resolve_page(p, generation);
                 if (page.owner != nullptr) {
+                    if (VideoCommon::Nx2Profile::Enabled()) {
+                        Tegra::Nx2NoteCpuReadForProfile(page.device_page + offset, size);
+                    }
+                    Tegra::Nx2NoteMemoryRead(page.device_page + offset, size);
                     diagnostics.Add(Event::HostEligible);
                     diagnostics.SetAliases(aliases);
                     const u64 work_generation = gpu.ReadbackGeneration();
@@ -996,6 +1001,10 @@ struct Memory::Impl {
             }
             host_read_cache.Invalidate();
             gpu_device_memory.ApplyOpOnPointer(p, host_thread_scratch, [&](DAddr address) {
+                if (VideoCommon::Nx2Profile::Enabled()) {
+                    Tegra::Nx2NoteCpuReadForProfile(address, size);
+                }
+                Tegra::Nx2NoteMemoryRead(address, size);
                 diagnostics.AddAlias();
                 diagnostics.Add(Event::GpuFallback);
                 static_cast<void>(ordered_read(address, size));
@@ -1004,9 +1013,11 @@ struct Memory::Impl {
             return;
         }
         auto& current_area = rasterizer_read_areas[core];
-        if (read_area_generations[core] != generation) {
+        const u64 area_epoch = Tegra::g_nx2_read_area_epoch.load(std::memory_order_acquire);
+        if (read_area_generations[core] != generation || read_area_epochs[core] != area_epoch) {
             current_area = {};
             read_area_generations[core] = generation;
+            read_area_epochs[core] = area_epoch;
         }
         // Without a fastmem arena every guest read of a GPU-tracked page comes here, and each
         // one the area cache misses is a round trip through the GPU thread (the guest core
@@ -1038,6 +1049,10 @@ struct Memory::Impl {
                     return;
                 }
             }
+            if (VideoCommon::Nx2Profile::Enabled()) {
+                Tegra::Nx2NoteCpuReadForProfile(address, size);
+            }
+            Tegra::Nx2NoteMemoryRead(address, size);
             if (current_area.start_address <= address && end_address <= current_area.end_address)
                 [[likely]] {
                 diagnostics.Add(Event::AreaHit);
@@ -1199,6 +1214,7 @@ struct Memory::Impl {
 
     std::array<VideoCore::RasterizerDownloadArea, Core::Hardware::NUM_CPU_CORES> rasterizer_read_areas{};
     std::array<u64, Core::Hardware::NUM_CPU_CORES> read_area_generations{};
+    std::array<u64, Core::Hardware::NUM_CPU_CORES> read_area_epochs{};
     std::array<CoreReadbackShadow::State, Core::Hardware::NUM_CPU_CORES> core_readback_shadows{};
     std::array<CoreReadbackCache, Core::Hardware::NUM_CPU_CORES> core_readback_caches{};
     std::array<std::unique_ptr<CoreReadbackCapacityShadow::State>, Core::Hardware::NUM_CPU_CORES>

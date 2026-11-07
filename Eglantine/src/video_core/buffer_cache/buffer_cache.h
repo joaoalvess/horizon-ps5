@@ -235,6 +235,26 @@ std::optional<VideoCore::RasterizerDownloadArea> BufferCache<P>::GetFlushArea(DA
     DAddr device_addr_end_aligned = Common::AlignUp(device_addr + size, Core::DEVICE_PAGESIZE);
     area->start_address = device_addr_start_aligned;
     area->end_address = device_addr_end_aligned;
+    if (DownloadDecay()) {
+        const u64 bytes = device_addr_end_aligned - device_addr_start_aligned;
+        area->preemtive = true;
+        gpu_modified_ranges.ForEachInRange(device_addr_start_aligned, bytes,
+                                           [&](DAddr begin, DAddr end) {
+            if (area->preemtive && !IsRegionFullyPreflushable(begin, end - begin)) {
+                area->preemtive = false;
+            }
+        });
+        if (decay_demoted.Intersects(device_addr_start_aligned, bytes)) {
+            decay_demoted.ForEachInRange(device_addr_start_aligned, bytes,
+                                         [&](DAddr begin, DAddr end) {
+                decay_pinned.Add(begin, end - begin);
+                decay_read_again_bytes += end - begin;
+            });
+            decay_demoted.Subtract(device_addr_start_aligned, bytes);
+        }
+        memory_tracker.MarkRegionAsPreflushable(device_addr_start_aligned, bytes);
+        return area;
+    }
     if (memory_tracker.IsRegionPreflushable(device_addr, size)) {
         area->preemtive = true;
         return area;
@@ -681,8 +701,65 @@ bool BufferCache<P>::ShouldWaitAsyncFlushes() const noexcept {
 }
 
 template <class P>
+void BufferCache<P>::DecayDownloads() {
+    if ((++decay_commits & 63) != 0) {
+        return;
+    }
+    const u64 now = Nx2Profile::Now();
+    if (decay_window_start == 0) {
+        decay_window_start = now;
+        return;
+    }
+    if (now - decay_window_start < 1'000'000'000ULL) {
+        return;
+    }
+    decay_window_start = now;
+    Nx2Profile::Add(Nx2Profile::Counter::DecayReadAgainBytes, decay_read_again_bytes);
+    decay_read_again_bytes = 0;
+    auto& reads = Tegra::Nx2CpuReadsSinceDecay();
+    std::vector<std::pair<DAddr, DAddr>> unread;
+    decay_downloaded.ForEach([&](DAddr begin, DAddr end) {
+        for (DAddr page = Common::AlignDown(begin, DEVICE_PAGESIZE); page < end;
+             page += DEVICE_PAGESIZE) {
+            if (reads.Take(page >> Tegra::Nx2WrittenPageBits) ||
+                decay_pinned.Intersects(page, DEVICE_PAGESIZE)) {
+                continue;
+            }
+            if (!unread.empty() && unread.back().second == page) {
+                unread.back().second = page + DEVICE_PAGESIZE;
+            } else {
+                unread.emplace_back(page, page + DEVICE_PAGESIZE);
+            }
+        }
+    });
+    decay_downloaded.Clear();
+    if (unread.empty()) {
+        return;
+    }
+    u64 demoted_bytes = 0;
+    for (const auto& [begin, end] : unread) {
+        const u64 bytes = end - begin;
+        memory_tracker.UnmarkRegionAsPreflushable(begin, bytes);
+        cpu_read_ranges.Subtract(begin, bytes);
+        for (auto& ranges : committed_gpu_modified_ranges) {
+            ranges.Subtract(begin, bytes);
+        }
+        read_trapped_ranges.Subtract(begin, bytes);
+        ArmReadTraps(begin, bytes);
+        decay_demoted.Add(begin, bytes);
+        demoted_bytes += bytes;
+    }
+    Tegra::g_nx2_read_area_epoch.fetch_add(1, std::memory_order_release);
+    Nx2Profile::Add(Nx2Profile::Counter::DecayDemotedBytes, demoted_bytes);
+}
+
+template <class P>
 void BufferCache<P>::CommitAsyncFlushesHigh() {
     AccumulateFlushes();
+    const bool demote = DownloadDecay() && Tegra::Nx2DownloadDemotion();
+    if (demote) {
+        DecayDownloads();
+    }
 
     if (committed_gpu_modified_ranges.empty()) {
         async_buffers.emplace_back(std::optional<Async_Buffer>{});
@@ -752,6 +829,11 @@ void BufferCache<P>::CommitAsyncFlushesHigh() {
     auto download_staging = runtime.DownloadStagingBuffer(total_size_bytes, true);
     boost::container::small_vector<BufferCopy, 4> normalized_copies;
     Common::RangeSet<DAddr> download_ranges;
+    boost::container::small_vector<DAddr, 64> read_pages;
+    u64 read_since = 0;
+    u64 unread_since = 0;
+    u64 unread_in_window = 0;
+    u64 never_noted = 0;
     runtime.PreCopyBarrier();
     for (auto& [copy, buffer_id] : downloads) {
         copy.dst_offset += download_staging.offset;
@@ -765,15 +847,31 @@ void BufferCache<P>::CommitAsyncFlushesHigh() {
             const auto& pages = Nx2Profile::DmaReadPages();
             for (DAddr page = orig_device_addr >> 12; page <= (orig_device_addr + copy.size - 1) >> 12;
                  ++page) {
+                const DAddr begin = (std::max)(orig_device_addr, page << 12);
+                const DAddr end = (std::min)(orig_device_addr + copy.size, (page + 1) << 12);
                 if (pages.contains(page)) {
-                    const DAddr begin = (std::max)(orig_device_addr, page << 12);
-                    const DAddr end = (std::min)(orig_device_addr + copy.size, (page + 1) << 12);
                     on_dma_pages += end - begin;
+                }
+                if (Tegra::Nx2CpuReadsSinceDownload().Test(page)) {
+                    read_since += end - begin;
+                    read_pages.push_back(page);
+                    continue;
+                }
+                unread_since += end - begin;
+                if (!Tegra::Nx2ReadsInWindow().Test(page)) {
+                    unread_in_window += end - begin;
+                }
+                if (!memory_tracker.IsRegionPreflushable(page << 12, DEVICE_PAGESIZE) &&
+                    !cpu_read_ranges.Intersects(page << 12, DEVICE_PAGESIZE)) {
+                    never_noted += end - begin;
                 }
             }
             Nx2Profile::Add(Nx2Profile::Counter::DownloadBytesOnDmaPages, on_dma_pages);
         }
         download_ranges.Add(orig_device_addr, copy.size);
+        if (demote) {
+            decay_downloaded.Add(orig_device_addr, copy.size);
+        }
         buffer.MarkUsage(copy.src_offset, copy.size);
         runtime.CopyBuffer(download_staging.buffer, buffer, copies, false);
         ReadbackDependencyDiagnostics::BufferCopySource(runtime, buffer, copy.src_offset, copy.size, true);
@@ -781,6 +879,21 @@ void BufferCache<P>::CommitAsyncFlushesHigh() {
         normalized_copies.push_back(second_copy);
     }
     runtime.PostCopyBarrier();
+    if (Nx2Profile::Enabled()) {
+        for (const DAddr page : read_pages) {
+            Tegra::Nx2CpuReadsSinceDownload().Take(page);
+        }
+        Nx2Profile::Add(Nx2Profile::Counter::DownloadReadSince, read_since);
+        Nx2Profile::Add(Nx2Profile::Counter::DownloadUnreadSince, unread_since);
+        Nx2Profile::Add(Nx2Profile::Counter::DownloadUnreadInWindow, unread_in_window);
+        Nx2Profile::Add(Nx2Profile::Counter::DownloadNeverNoted, never_noted);
+        static u64 read_window_start = 0;
+        const u64 now = Nx2Profile::Now();
+        if (now - read_window_start >= 10'000'000'000ULL) {
+            Tegra::Nx2ReadsInWindow().ClearAll();
+            read_window_start = now;
+        }
+    }
     pending_downloads.emplace_back(std::move(normalized_copies));
     pending_download_ranges.emplace_back(std::move(download_ranges));
     async_buffers.emplace_back(download_staging);

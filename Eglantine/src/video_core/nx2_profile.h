@@ -78,7 +78,7 @@ inline u64 Now() {
 struct ThreadData {
     std::array<u64, static_cast<size_t>(Zone::Count)> exclusive_ns{};
     std::array<u64, static_cast<size_t>(Zone::Count)> count{};
-    std::array<u64, 8> counters{}; ///< See Counter
+    std::array<u64, 14> counters{}; ///< See Counter
     u64 child_ns{};    ///< Time of the zones nested in the current one
     u64 window_start{};
 };
@@ -128,6 +128,12 @@ enum class Counter : u32 {
     SameValueWrites, ///< Of MethodWrites: the register already held the value
     AcquireChecks,  ///< Semaphore acquires evaluated
     AcquireWaits,   ///< Of AcquireChecks: not met yet (the channel waits)
+    DownloadReadSince,
+    DownloadUnreadSince,
+    DownloadUnreadInWindow,
+    DownloadNeverNoted,
+    DecayDemotedBytes,
+    DecayReadAgainBytes,
 };
 
 /// Device pages (4 KiB) the native MME has DMA-read since start (GPU thread only; filled only
@@ -182,6 +188,16 @@ inline void Report(const char* thread_name = "GPU thread") {
                         static_cast<double>(data.counters[1]) * 1e9 / window,
                         static_cast<double>(data.counters[3]) * 1e9 / 1024.0 / window,
                         static_cast<double>(data.counters[2]) * 1e9 / 1024.0 / window);
+    line += fmt::format(" | buffer downloads on pages the CPU read since their last download "
+                        "{:.0f} KiB, not {:.0f} KiB ({:.0f} KiB unread this window, {:.0f} KiB "
+                        "never noted)",
+                        static_cast<double>(data.counters[8]) * 1e9 / 1024.0 / window,
+                        static_cast<double>(data.counters[9]) * 1e9 / 1024.0 / window,
+                        static_cast<double>(data.counters[10]) * 1e9 / 1024.0 / window,
+                        static_cast<double>(data.counters[11]) * 1e9 / 1024.0 / window);
+    line += fmt::format(" | download decay: {:.0f} KiB demoted, {:.0f} KiB read again",
+                        static_cast<double>(data.counters[12]) * 1e9 / 1024.0 / window,
+                        static_cast<double>(data.counters[13]) * 1e9 / 1024.0 / window);
     line += fmt::format(" | 3D register writes {:.0f} ({:.0f} same value)",
                         static_cast<double>(data.counters[4]) * 1e9 / window,
                         static_cast<double>(data.counters[5]) * 1e9 / window);

@@ -12,6 +12,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <utility>
 #include <vector>
@@ -137,6 +138,93 @@ inline void Nx2ClearGpuWrittenPages() {
         return false;
     }
     return (g_nx2_gpu_written_pages[page / 64].load(std::memory_order_relaxed) >> (page % 64)) & 1;
+}
+
+class Nx2PageBits {
+public:
+    void Set(u64 device_address, u64 size) {
+        if (size == 0) {
+            return;
+        }
+        const u64 first = device_address >> Nx2WrittenPageBits;
+        const u64 last = std::min<u64>((device_address + size - 1) >> Nx2WrittenPageBits, Pages - 1);
+        for (u64 page = first; page <= last; ++page) {
+            auto& word = words[page / 64];
+            const u64 bit = u64{1} << (page % 64);
+            if ((word.load(std::memory_order_relaxed) & bit) == 0) {
+                word.fetch_or(bit, std::memory_order_relaxed);
+            }
+        }
+    }
+
+    [[nodiscard]] bool Test(u64 page) const {
+        return page < Pages && ((words[page / 64].load(std::memory_order_relaxed) >> (page % 64)) & 1);
+    }
+
+    bool Take(u64 page) {
+        if (!Test(page)) {
+            return false;
+        }
+        const u64 bit = u64{1} << (page % 64);
+        return (words[page / 64].fetch_and(~bit, std::memory_order_relaxed) & bit) != 0;
+    }
+
+    void ClearAll() {
+        for (u64 index = 0; index < Pages / 64; ++index) {
+            words[index].store(0, std::memory_order_relaxed);
+        }
+    }
+
+private:
+    static constexpr u64 Pages = u64{1} << (36 - Nx2WrittenPageBits);
+    std::unique_ptr<std::atomic<u64>[]> words{new std::atomic<u64>[Pages / 64]{}};
+};
+
+inline Nx2PageBits& Nx2CpuReadsSinceDownload() {
+    static Nx2PageBits bits;
+    return bits;
+}
+
+inline Nx2PageBits& Nx2ReadsInWindow() {
+    static Nx2PageBits bits;
+    return bits;
+}
+
+inline void Nx2NoteCpuReadForProfile(u64 device_address, u64 size) {
+    Nx2CpuReadsSinceDownload().Set(device_address, size);
+    Nx2ReadsInWindow().Set(device_address, size);
+}
+
+[[nodiscard]] inline int Nx2DownloadDecayMode() {
+    static const int mode = [] {
+        const char* value = std::getenv("EDEN_NX2_DOWNLOAD_DECAY");
+        if (value == nullptr) {
+            return 0;
+        }
+        return value[0] == '0' ? 0 : (value[0] == 'p' ? 1 : 2);
+    }();
+    return mode;
+}
+
+[[nodiscard]] inline bool Nx2DownloadDecay() {
+    return Nx2DownloadDecayMode() != 0;
+}
+
+[[nodiscard]] inline bool Nx2DownloadDemotion() {
+    return Nx2DownloadDecayMode() == 2;
+}
+
+inline Nx2PageBits& Nx2CpuReadsSinceDecay() {
+    static Nx2PageBits bits;
+    return bits;
+}
+
+inline std::atomic<u64> g_nx2_read_area_epoch{};
+
+inline void Nx2NoteMemoryRead(u64 device_address, u64 size) {
+    if (Nx2DownloadDemotion() && g_nx2_ampere.load(std::memory_order_relaxed)) {
+        Nx2CpuReadsSinceDecay().Set(device_address, size);
+    }
 }
 
 template <typename Translate>

@@ -576,6 +576,20 @@ private:
         return AsyncBufferDownloads() || memory_tracker.IsRegionPreflushable(device_addr, size);
     }
 
+    bool DownloadDecay() const {
+        return !AsyncBufferDownloads() && Tegra::Nx2DownloadDecay();
+    }
+
+    bool IsRegionFullyPreflushable(DAddr addr, u64 size) {
+        u64 covered = 0;
+        memory_tracker.ForEachPreflushableRange(addr, size, [&](DAddr start, u64 bytes) {
+            covered += (std::min)(start + bytes, addr + size) - (std::max)(start, addr);
+        });
+        return covered >= size;
+    }
+
+    void DecayDownloads();
+
     /// GPU writes that are not downloaded at fences: trap the guest CPU's next read of their
     /// pages, which flushes them once and marks them Preflushable (then DownloadsAtFence).
     void ArmReadTraps(DAddr device_addr, u64 size) {
@@ -601,10 +615,32 @@ private:
     /// Copying every GPU-written range back instead (each written native storage binding is an
     /// 8 MiB window) dropped it from 60 to about 42 frames a second.
     Common::RangeSet<DAddr> cpu_read_ranges;
+    Common::RangeSet<DAddr> decay_downloaded;
+    Common::RangeSet<DAddr> decay_demoted;
+    Common::RangeSet<DAddr> decay_pinned;
+    u64 decay_read_again_bytes = 0;
+    u64 decay_commits = 0;
+    u64 decay_window_start = 0;
 
     /// Queues the parts of a GPU write to [addr, addr + size) that are copied back at the next
     /// fence.
     void QueueDownload(DAddr addr, u64 size) {
+        if (DownloadDecay()) {
+            if (memory_tracker.IsRegionPreflushable(addr, size)) {
+                memory_tracker.ForEachPreflushableRange(addr, size, [&](DAddr start, u64 bytes) {
+                    const DAddr begin = (std::max)(start, addr);
+                    const DAddr end = (std::min)(start + bytes, addr + size);
+                    if (begin < end) {
+                        uncommitted_gpu_modified_ranges.Add(begin, end - begin);
+                    }
+                });
+            }
+            cpu_read_ranges.ForEachInRange(addr, size, [this](DAddr start, DAddr end) {
+                uncommitted_gpu_modified_ranges.Add(start, end - start);
+            });
+            ArmReadTraps(addr, size);
+            return;
+        }
         if (DownloadsAtFence(addr, size)) {
             uncommitted_gpu_modified_ranges.Add(addr, size);
             return;

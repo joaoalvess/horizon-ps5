@@ -1240,6 +1240,10 @@ void RasterizerVulkan::FlushRegion(DAddr addr, u64 size, VideoCommon::CacheType 
 
 bool RasterizerVulkan::MustFlushRegion(DAddr addr, u64 size, VideoCommon::CacheType which) {
     if ((True(which & VideoCommon::CacheType::BufferCache))) {
+        if (VideoCommon::Nx2Profile::Enabled()) {
+            Tegra::Nx2ReadsInWindow().Set(addr, size);
+        }
+        Tegra::Nx2NoteMemoryRead(addr, size);
         std::scoped_lock lock{buffer_cache.mutex};
         if (buffer_cache.IsRegionGpuModified(addr, size)) {
             return true;
