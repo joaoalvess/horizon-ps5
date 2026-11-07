@@ -7,6 +7,7 @@
 #pragma once
 
 #include <algorithm>
+#include <bit>
 #include <cstring>
 #include <vector>
 
@@ -20,7 +21,7 @@
 
 namespace VideoCommon {
 
-template <typename T>
+template <typename T, typename Id = u32>
 class DescriptorTable {
 public:
     [[nodiscard]] bool Synchronize(GPUVAddr gpu_addr, u32 limit) noexcept {
@@ -69,20 +70,22 @@ public:
     void Refresh(GPUVAddr gpu_addr, u32 limit) noexcept {
         current_gpu_addr = gpu_addr;
         current_limit = limit;
-        // Mario Brothership reallocates a lot of times, so use aggressive pre-alloc sizes
-        // std::vector<T> by default uses quadratic growth, but that isn't even enough to satisfy brothership
-        const size_t num_descriptors = ((limit + 0x80000) & (~0x7ffff)) + 1;
+        // Power-of-two growth: amortised like the old 0x80000 rounding without 16 MiB per table.
+        const size_t num_descriptors = std::bit_ceil(static_cast<size_t>(limit) + 1);
         size_t old_size = read_descriptors.size();
         read_descriptors.resize(Common::DivCeil(num_descriptors, 64U));
         old_size = (std::min)(old_size, read_descriptors.size());
         std::fill(read_descriptors.begin(), read_descriptors.begin() + old_size, 0);
         invalidated = false;
-        //
-        descriptors.resize(num_descriptors);
+        if (descriptors.size() < num_descriptors) {
+            descriptors.resize(num_descriptors);
+            bound_ids.resize(num_descriptors);
+        }
     }
 
     std::vector<u64> read_descriptors;
     std::vector<T> descriptors;
+    std::vector<Id> bound_ids; ///< Cache id resolved for each read descriptor
     GPUVAddr current_gpu_addr{};
     u32 current_limit{};
     bool invalidated{}; ///< read_descriptors is to be cleared before the next read

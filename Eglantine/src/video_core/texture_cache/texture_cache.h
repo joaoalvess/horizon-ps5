@@ -697,14 +697,13 @@ SamplerId TextureCache<P>::GetSamplerId(u32 index, bool compute) {
         LOG_TRACE(HW_GPU, "Invalid sampler index={}", index);
         return NULL_SAMPLER_ID;
     }
-    auto const map_index = index | (compute ? Common::SlotId::TAGGED_VALUE : 0);
     auto const [descriptor, is_new] = table.Read(*gpu_memory, index);
     if (is_new) {
         auto const id = FindSampler(descriptor, compute);
-        channel_state->sampler_ids.insert_or_assign(map_index, id);
+        table.bound_ids[index] = id;
         return id;
     }
-    return channel_state->sampler_ids.find(map_index)->second;
+    return table.bound_ids[index];
 }
 
 template <class P>
@@ -936,7 +935,6 @@ ImageViewId TextureCache<P>::VisitImageView(u32 index, bool compute) {
         LOG_TRACE(HW_GPU, "Invalid image view index={}", index);
         return NULL_IMAGE_VIEW_ID;
     }
-    auto const map_index = index | (compute ? Common::SlotId::TAGGED_VALUE : 0);
     // Is new (on the tegra engine side)?
     auto const [descriptor, is_new] = table.Read(*gpu_memory, index);
     if (is_new) {
@@ -964,16 +962,16 @@ ImageViewId TextureCache<P>::VisitImageView(u32 index, bool compute) {
                 }
             }
             PrepareImageView(pair->second, false, false);
-            channel_state->image_view_ids.insert_or_assign(map_index, pair->second);
+            table.bound_ids[index] = pair->second;
             return pair->second;
         }
-        channel_state->image_view_ids.insert_or_assign(map_index, NULL_IMAGE_VIEW_ID);
+        table.bound_ids[index] = NULL_IMAGE_VIEW_ID;
         return NULL_IMAGE_VIEW_ID;
     }
-    auto const it = channel_state->image_view_ids.find(map_index);
-    if (it->second != NULL_IMAGE_VIEW_ID)
-        PrepareImageView(it->second, false, false);
-    return it->second;
+    const auto id = table.bound_ids[index];
+    if (id != NULL_IMAGE_VIEW_ID)
+        PrepareImageView(id, false, false);
+    return id;
 }
 
 template <class P>
@@ -2443,13 +2441,13 @@ void TextureCache<P>::InvalidateScale(Image& image) {
     for (size_t c : active_channel_ids) {
         auto& channel_info = channel_storage[c];
 
-        // Walks every TIC index the channel ever read: 8% of the split's back thread at Mario
+        // Walks every TIC index the channel's tables hold: 8% of the split's back thread at Mario
         // Kart World's title, where a texture is deleted most frames. The tables are invalidated
         // below, so the stale ids are never read; EDEN_NX2_TC_CORRUPT_IDS=1 keeps the walk.
         if constexpr (ENABLE_VALIDATION) {
             if (CorruptDeletedViewIds()) {
-                for (auto& e : channel_info.image_view_ids)
-                    e.second = CORRUPT_ID;
+                std::ranges::fill(channel_info.graphics_image_table.bound_ids, CORRUPT_ID);
+                std::ranges::fill(channel_info.compute_image_table.bound_ids, CORRUPT_ID);
             }
         }
         channel_info.graphics_image_table.Invalidate();
@@ -4002,13 +4000,13 @@ void TextureCache<P>::DeleteImage(ImageId image_id, bool immediate_delete) {
     }
     for (size_t c : active_channel_ids) {
         auto& channel_info = channel_storage[c];
-        // Walks every TIC index the channel ever read: 8% of the split's back thread at Mario
+        // Walks every TIC index the channel's tables hold: 8% of the split's back thread at Mario
         // Kart World's title, where a texture is deleted most frames. The tables are invalidated
         // below, so the stale ids are never read; EDEN_NX2_TC_CORRUPT_IDS=1 keeps the walk.
         if constexpr (ENABLE_VALIDATION) {
             if (CorruptDeletedViewIds()) {
-                for (auto& e : channel_info.image_view_ids)
-                    e.second = CORRUPT_ID;
+                std::ranges::fill(channel_info.graphics_image_table.bound_ids, CORRUPT_ID);
+                std::ranges::fill(channel_info.compute_image_table.bound_ids, CORRUPT_ID);
             }
         }
         channel_info.graphics_image_table.Invalidate();
