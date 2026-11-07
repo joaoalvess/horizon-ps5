@@ -58,6 +58,7 @@ add_executable(tests
     video_core/ampere_bindless_surfaces.cpp
     video_core/ampere_f2i.cpp
     video_core/compute_storage_buffers.cpp
+    video_core/global_atomic_routing.cpp
     video_core/cooperative_matrix.cpp
     video_core/ampere_kirby.cpp
     video_core/ampere_geometry.cpp
