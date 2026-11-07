@@ -43,9 +43,13 @@ public:
         entries.clear();
     }
 
-    [[nodiscard]] std::optional<u32> QueuedValue(u64 device_address, u64 consumed) const {
+    [[nodiscard]] std::optional<u32> QueuedValue(u64 device_address, u64 consumed) {
         const auto it = entries.find(device_address);
-        if (it == entries.end() || it->second.order <= consumed) {
+        if (it == entries.end()) {
+            return std::nullopt;
+        }
+        if (it->second.order <= consumed) {
+            entries.erase(it);
             return std::nullopt;
         }
         return it->second.value;

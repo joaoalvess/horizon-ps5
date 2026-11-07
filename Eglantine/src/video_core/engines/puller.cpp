@@ -505,7 +505,8 @@ void Puller::ProcessSemaphoreExecute(DmaPusher& dma_pusher, u32 argument) {
             if (meets(*queued)) {
                 return;
             }
-        } else if (LedgerActive() && AcquireChecksRawWordFirst() &&
+        } else if ((operation == 2 || operation == 3) && LedgerActive() &&
+                   AcquireChecksRawWordFirst() &&
                    meets(dma_pusher.memory_manager.Read<u32>(address))) {
             return;
         }
