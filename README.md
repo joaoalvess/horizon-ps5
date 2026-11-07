@@ -12,9 +12,19 @@
 
 This is an early alpha. Video, audio, controller input, and saves have been confirmed working. Compatibility and performance will vary between games. The current release is **v1.000.000**.
 
+## This repository
+
+horizon-ps5 is a development fork of EglantinePS5. Its first commit, `d1e57fb`, is EglantinePS5 as published (`heydemoura/EglantinePS5` at `44d0d9d`), the baseline every change is measured against. `main` carries the work since then:
+
+- **The emulator core is part of the repository.** `Eglantine/` holds Zortos's Eglantine core at `3140648a`, then EglantinePS5's 17 core patches and the upstream Eglantine and Lichii changes that help on the PS5, each as a commit that keeps its author. There is no submodule and no patch set applied at build time.
+- **Upstream is triaged, not merged.** Every upstream change since the pin, and every open pull request, has a verdict for the PS5 in [agents/](agents/README.md); [agents/port-log.md](agents/port-log.md) records what `v2` took and why the rest waits.
+- **Each change is checked on the console.** [agents/console-test.md](agents/console-test.md) is the per-game comparison of the baseline and `v2`; [PLAN.md](PLAN.md) holds the stages and their status.
+
+The app still installs as EglantinePS5 (`PPSA98515`, data in `/data/eglantineps5`), so both builds run on the same console data during the comparison. Its own name, and a PS5 platform layer in place of the build-time source rewrites, are the next stage.
+
 ## Source code
 
-The complete EglantinePS5 source is in this repository: the PS5 frontend and launcher in `headless/`, and the build and packaging tools in `tools/`. To build it yourself, run `make` on Linux (Ubuntu 26.04; WSL works). It fetches every dependency at its pinned revision and writes the release files to `dist/`; `make help` lists the other targets. See [docs/BUILDING.md](docs/BUILDING.md). A release ZIP built by GitHub Actions can be checked with `gh attestation verify <ZIP> -R blackbearreloaded/ProsperoEden` (GitHub CLI); this covers releases built from now on (after v1.000.090), not earlier ones.
+The PS5 frontend and launcher are in `headless/`, the emulator core in `Eglantine/`, and the build and packaging tools in `tools/`. To build it, run `make` on an x86-64 Linux host (Ubuntu 26.04; WSL works), or `tools/docker/run.sh make` on Apple silicon, which builds in an amd64 container under Rosetta. It fetches every dependency at its pinned revision and writes the release files to `dist/`; `make help` lists the other targets. See [docs/BUILDING.md](docs/BUILDING.md).
 
 Local-wireless multiplayer through Eden rooms is new in v1.000.000 and experimental. See the
 [setup guide and current limitations](docs/MULTIPLAYER.md) and the
