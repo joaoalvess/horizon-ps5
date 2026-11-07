@@ -26,6 +26,7 @@
 #include "video_core/memory_manager.h"
 #include "video_core/nx2.h"
 #include "video_core/rasterizer_interface.h"
+#include "video_core/semaphore_ledger.h"
 
 namespace Tegra::Engines {
 
@@ -80,10 +81,43 @@ void DrainBack() {
 // It measured no frame rate gain at that title, so it is opt-in: EDEN_NX2_ACQUIRE_DRAIN_TO_RELEASE=1.
 std::unordered_map<GPUVAddr, u64> g_release_positions;
 
-void NoteRelease(GPUVAddr address) {
-    if (auto& split = VideoCommon::GpuSplit::Get(); split.Active()) {
-        g_release_positions[address & ~GPUVAddr{3}] = split.WritePosition();
+bool LedgerActive() {
+    return Nx2SemaphoreLedger::Enabled() && VideoCommon::GpuSplit::Get().Active();
+}
+
+void NoteRelease(DmaPusher& dma_pusher, GPUVAddr address, u32 payload) {
+    auto& split = VideoCommon::GpuSplit::Get();
+    if (!split.Active()) {
+        return;
     }
+    g_release_positions[address & ~GPUVAddr{3}] = split.WritePosition();
+    if (!Nx2SemaphoreLedger::Enabled()) {
+        return;
+    }
+    if (const auto device = dma_pusher.memory_manager.GpuToCpuAddress(address)) {
+        Nx2SemaphoreLedger::Get().NoteRelease(*device, payload, split.WritePosition());
+    }
+}
+
+void ForgetRelease(DmaPusher& dma_pusher, GPUVAddr address) {
+    if (!LedgerActive()) {
+        return;
+    }
+    if (const auto device = dma_pusher.memory_manager.GpuToCpuAddress(address)) {
+        Nx2SemaphoreLedger::Get().Forget(*device);
+    }
+}
+
+std::optional<u32> QueuedRelease(DmaPusher& dma_pusher, GPUVAddr address) {
+    if (!LedgerActive()) {
+        return std::nullopt;
+    }
+    const auto device = dma_pusher.memory_manager.GpuToCpuAddress(address);
+    if (!device) {
+        return std::nullopt;
+    }
+    return Nx2SemaphoreLedger::Get().QueuedValue(
+        *device, VideoCommon::GpuSplit::Get().ConsumedPosition());
 }
 
 void DrainBackToRelease(GPUVAddr address) {
@@ -125,7 +159,11 @@ bool Puller::CanResumeAcquire(DmaPusher& dma_pusher) {
     }
     // The release may still be queued for the split GPU thread's back half (and the caches
     // ReadSemaphoreWord asks are its state).
-    if (AcquireChecksRawWordFirst() &&
+    const auto queued = QueuedRelease(dma_pusher, pending_acquire->address);
+    if (queued && pending_acquire->Matches(*queued)) {
+        return true;
+    }
+    if (!queued && AcquireChecksRawWordFirst() &&
         pending_acquire->Matches(dma_pusher.memory_manager.Read<u32>(pending_acquire->address))) {
         return true;
     }
@@ -283,7 +321,7 @@ void Puller::ProcessSemaphoreTriggerMethod(DmaPusher& dma_pusher) {
         OnBack([rasterizer = dma_pusher.rasterizer, sequence_address, properties, payload] {
             rasterizer->Query(sequence_address, VideoCommon::QueryType::Payload, properties, payload, 0);
         });
-        NoteRelease(sequence_address);
+        NoteRelease(dma_pusher, sequence_address, payload);
         if (auto& split = VideoCommon::GpuSplit::Get(); split.Active()) {
             split.NoteRelease(sequence_address);
         }
@@ -304,14 +342,27 @@ void Puller::ProcessSemaphoreTriggerMethod(DmaPusher& dma_pusher) {
             return;
         }
         VideoCommon::Nx2Profile::Add(VideoCommon::Nx2Profile::Counter::AcquireChecks, 1);
-        // Where acquires end (logged per 4,000): met by the guest's word, met once the back was
-        // drained (a release was queued there), or left pending for the GPU.
+        // Where acquires end (logged per 4,000): met by the guest's word, met by a release still
+        // queued for the back, met once the back was drained (a release was queued there), or
+        // left pending for the GPU.
         struct AcquireStats {
-            u64 checks{}, raw{}, drained_waits{}, drained_met{}, pending{};
+            u64 checks{}, raw{}, ledger{}, drained_waits{}, drained_met{}, pending{};
         };
         static AcquireStats acquire_stats;
         ++acquire_stats.checks;
-        if (AcquireChecksRawWordFirst() &&
+        if (acquire_stats.checks % 4000 == 0) {
+            LOG_INFO(HW_GPU, "Semaphore acquires: {} checked, {} met by the guest word, {} met by a "
+                     "queued release, {} waited for the back, {} met after it, {} left pending for "
+                     "the GPU",
+                     acquire_stats.checks, acquire_stats.raw, acquire_stats.ledger,
+                     acquire_stats.drained_waits, acquire_stats.drained_met, acquire_stats.pending);
+        }
+        const auto queued = QueuedRelease(dma_pusher, acquire.address);
+        if (queued && acquire.Matches(*queued)) {
+            ++acquire_stats.ledger;
+            return;
+        }
+        if (!queued && AcquireChecksRawWordFirst() &&
             acquire.Matches(dma_pusher.memory_manager.Read<u32>(acquire.address))) {
             ++acquire_stats.raw;
             return;
@@ -323,12 +374,6 @@ void Puller::ProcessSemaphoreTriggerMethod(DmaPusher& dma_pusher) {
             }
         }
         DrainBackToRelease(acquire.address);
-        if (acquire_stats.checks % 4000 == 0) {
-            LOG_INFO(HW_GPU, "Semaphore acquires: {} checked, {} met by the guest word, {} waited for "
-                     "the back, {} met after it, {} left pending for the GPU",
-                     acquire_stats.checks, acquire_stats.raw, acquire_stats.drained_waits,
-                     acquire_stats.drained_met, acquire_stats.pending);
-        }
         if (acquire.Matches(ReadSemaphoreWord(dma_pusher, acquire.address))) {
             ++acquire_stats.drained_met;
             return;
@@ -407,7 +452,7 @@ void Puller::ProcessSemaphoreRelease(DmaPusher& dma_pusher) {
         rasterizer->Query(sequence_address, VideoCommon::QueryType::Payload,
                           VideoCommon::QueryPropertiesFlags::IsAFence, payload, 0);
     });
-    NoteRelease(sequence_address);
+    NoteRelease(dma_pusher, sequence_address, payload);
 }
 
 void Puller::ProcessSemaphoreAcquire(DmaPusher& dma_pusher) {
@@ -432,24 +477,44 @@ void Puller::ProcessSemaphoreExecute(DmaPusher& dma_pusher, u32 argument) {
                              (regs.reg_array[0x17] & ~3U);
     const u32 payload = regs.reg_array[0x19];
     const u32 operation = argument & 7;
+    const bool payload_64 = (argument & (1U << 24)) != 0;
     if (operation == 1) { // RELEASE
         OnBack([rasterizer = dma_pusher.rasterizer, address, payload] {
             rasterizer->Query(address, VideoCommon::QueryType::Payload,
                               VideoCommon::QueryPropertiesFlags::IsAFence, payload, 0);
         });
-        NoteRelease(address);
+        NoteRelease(dma_pusher, address, payload);
+        if (payload_64) {
+            ForgetRelease(dma_pusher, address);
+        }
         return;
+    }
+    if (operation == 6) {
+        ForgetRelease(dma_pusher, address);
+    }
+    const auto meets = [operation, payload](u32 word) {
+        return operation == 0   ? word == payload
+               : operation == 2 ? word >= payload
+               : operation == 3 ? static_cast<s32>(word - payload) >= 0
+               : operation == 4 ? (word & payload) != 0
+               : operation == 5 ? (word & payload) == 0
+                                : true;
+    };
+    if (!payload_64 && operation <= 5) {
+        if (const auto queued = QueuedRelease(dma_pusher, address)) {
+            if (meets(*queued)) {
+                return;
+            }
+        } else if (LedgerActive() && AcquireChecksRawWordFirst() &&
+                   meets(dma_pusher.memory_manager.Read<u32>(address))) {
+            return;
+        }
     }
     // Acquires: check once after flushing pending fences; never block the GPU thread on them.
     DrainBack();
     dma_pusher.rasterizer->ReleaseFences();
     const u32 word = dma_pusher.memory_manager.Read<u32>(address);
-    const bool ready = operation == 0   ? word == payload
-                       : operation == 2 ? word >= payload
-                       : operation == 3 ? static_cast<s32>(word - payload) >= 0
-                       : operation == 4 ? (word & payload) != 0
-                       : operation == 5 ? (word & payload) == 0
-                                        : true;
+    const bool ready = meets(word);
     if (!ready) {
         static std::atomic<u32> reported{};
         if (reported.fetch_add(1) < 8) {

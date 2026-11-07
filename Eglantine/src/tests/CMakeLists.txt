@@ -49,6 +49,7 @@ add_executable(tests
     video_core/nx2_sparse_mappings.cpp
     video_core/nx2_sparse_region.cpp
     video_core/nx2_command_sync.cpp
+    video_core/nx2_semaphore_ledger.cpp
     video_core/nx2_command_ranges.cpp
     video_core/physical_alias.cpp
     video_core/ampere_lowering.cpp

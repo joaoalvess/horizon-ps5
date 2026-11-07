@@ -109,6 +109,7 @@ add_library(video_core STATIC
     native_query_trace.h
     nx2.h
     nx2_profile.h
+    semaphore_ledger.h
     pending_maps.h
     present.h
     pte_kind.h
