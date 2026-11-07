@@ -10,11 +10,13 @@
 // "Write logs at once" has every line written as it comes, as before: stderr unbuffered, stdout
 // by lines, and games stutter again.
 #pragma once
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
 #include <mutex>
 #include <thread>
+#include "common/logging.h"
 
 namespace Eden {
 class LogFlusher {
@@ -50,6 +52,8 @@ public:
         worker.join();
     }
 
+    void AlsoFlushCoreLog() { core_log.store(true, std::memory_order_release); }
+
 private:
     void Run() {
         for (bool stop = false; !stop;) {
@@ -59,12 +63,14 @@ private:
             }
             std::fflush(stderr);
             std::fflush(stdout);
+            if (core_log.load(std::memory_order_acquire)) Common::Log::Stop();
         }
     }
 
     std::mutex mutex;
     std::condition_variable wake;
     bool stopping = false;
+    std::atomic<bool> core_log{false};
     std::thread worker;
 };
 }

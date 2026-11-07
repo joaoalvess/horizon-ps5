@@ -563,6 +563,7 @@ int main(int argc, char** argv) {
         Common::FS::CreateEdenPaths();
         Eden::Performance::PlatformChecks();
         Common::Log::Initialize();
+        log_flusher.AlsoFlushCoreLog();
         Eden::Multiplayer::SetDetailedLogging(Eden::LoadPreferences().detailed_logging);
         Eden::Multiplayer::RoomClient rooms;
         for (;;) {
