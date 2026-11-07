@@ -155,6 +155,12 @@ u32 RecordingEnvironment::TextureBoundBuffer() const {
     return inner->TextureBoundBuffer();
 }
 
+// Native programs carry their own surface bank (lowered code, so the unique hash covers it);
+// the base class default would answer the texture bank instead.
+u32 RecordingEnvironment::SurfaceBoundBuffer() const {
+    return inner->SurfaceBoundBuffer();
+}
+
 u32 RecordingEnvironment::LocalMemorySize() const {
     return inner->LocalMemorySize();
 }
