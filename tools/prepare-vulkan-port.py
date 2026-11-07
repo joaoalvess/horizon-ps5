@@ -1223,8 +1223,9 @@ shader_source = shader_source.replace('    auto it{graphics_cache.find(graphics_
                                       '    auto it{graphics_cache.find(graphics_key)};\n    const bool is_new = it == graphics_cache.end();\n    if (is_new) {')
 for expression, index, count in (
     ('main_pools.ReleaseContents()', 19, 2),
-    ('TranslateProgram(pools.inst, pools.block, env, cfg, host_info)', 21, 3),
-    ('EmitSPIRV(profile, runtime_info, program, binding)', 22, 1),
+    ('TranslateProgram(pools.inst, pools.block, env, cfg, host_info)', 21, 2),
+    ('TranslateProgram(pools.inst, pools.block, env, cfg,\n                                               StageHostInfo(key, index))', 21, 1),
+    ('EmitSPIRV(stage_profile, runtime_info, program, binding)', 22, 1),
     ('EmitSPIRV(profile, program)', 22, 1),
     ('BuildShader(device, code)', 23, 2),
 ):
