@@ -95,6 +95,12 @@ public:
         return result;
     }
 
+    [[nodiscard]] bool HasQueries(VAddr addr, size_t size) {
+        bool found = false;
+        IterateCache<false>(addr, size, [&found](QueryLocation) { return found = true; });
+        return found;
+    }
+
     void CounterEnable(QueryType counter_type, bool is_enabled);
 
     void CounterReset(QueryType counter_type);

@@ -352,6 +352,7 @@ void QueryCacheBase<Traits>::CounterReport(GPUVAddr addr, QueryType counter_type
         streamer->Free(new_query_id);
         return;
     }
+    Tegra::Nx2MarkGpuHeld(cpu_addr, has_timestamp ? 16 : 4);
     auto [cont_addr, base] = gen_caching_indexing(cpu_addr);
     {
         std::scoped_lock lock(cache_mutex);

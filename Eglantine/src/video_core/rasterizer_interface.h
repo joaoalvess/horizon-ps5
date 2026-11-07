@@ -99,6 +99,18 @@ public:
 
     virtual RasterizerDownloadArea GetFlushArea(DAddr addr, u64 size) = 0;
 
+    virtual std::optional<RasterizerDownloadArea> GetUnorderedReadArea(DAddr addr, u64 size,
+                                                                       bool trust_preemptive) {
+        if (!trust_preemptive) {
+            return std::nullopt;
+        }
+        const auto area = GetFlushArea(addr, size);
+        if (!area.preemtive) {
+            return std::nullopt;
+        }
+        return area;
+    }
+
     /// Notify rasterizer that any caches of the specified region should be invalidated
     virtual void InvalidateRegion(DAddr addr, u64 size,
                                   VideoCommon::CacheType which = VideoCommon::CacheType::All) = 0;

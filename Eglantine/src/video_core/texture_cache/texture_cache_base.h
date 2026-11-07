@@ -492,6 +492,7 @@ private:
     void CompletePartialDownloads(DAddr address, u64 size, const ImageBase* except = nullptr);
     void CompleteAllPartialDownloads();
     void MarkModification(ImageBase& image);
+    void MarkGpuHeld(ImageBase& image);
 
     /// Synchronize image aliases, copying data if needed
     /// Tells the aliases of an image that it now holds contents up to its modification tick.

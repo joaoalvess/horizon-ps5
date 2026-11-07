@@ -1295,6 +1295,41 @@ VideoCore::RasterizerDownloadArea RasterizerVulkan::GetFlushArea(DAddr addr, u64
     return result;
 }
 
+std::optional<VideoCore::RasterizerDownloadArea> RasterizerVulkan::GetUnorderedReadArea(
+    DAddr addr, u64 size, bool trust_preemptive) {
+    const auto area = GetFlushArea(addr, size);
+    if (!area.preemtive) {
+        return std::nullopt;
+    }
+    const DAddr begin = area.start_address;
+    const u64 bytes = area.end_address - area.start_address;
+    if (!trust_preemptive) {
+        std::scoped_lock texture_lock{texture_cache.mutex};
+        if (texture_cache.IsRegionGpuModified(begin, bytes)) {
+            return std::nullopt;
+        }
+    }
+    if (query_cache.HasQueries(begin, bytes)) {
+        return std::nullopt;
+    }
+    using VideoCommon::ReadbackDiagnostics::Event;
+    const bool unordered = Tegra::Nx2ReadAfterItsWriters(
+        [&] {
+            std::scoped_lock buffer_lock{buffer_cache.mutex};
+            return buffer_cache.ReadDependency(begin, bytes);
+        },
+        [&](u64 downloads) {
+            VideoCommon::ReadbackDiagnostics::Scope diagnostic{Event::DownloadWait, bytes};
+            return buffer_cache.WaitForDownloads(downloads);
+        },
+        [&] { return buffer_cache.DownloadTrims(); });
+    if (!unordered) {
+        return std::nullopt;
+    }
+    VideoCommon::ReadbackDiagnostics::Scope diagnostic{Event::UnorderedRead, bytes};
+    return area;
+}
+
 void RasterizerVulkan::InvalidateRegion(DAddr addr, u64 size, VideoCommon::CacheType which) {
     if (addr == 0 || size == 0) {
         return;

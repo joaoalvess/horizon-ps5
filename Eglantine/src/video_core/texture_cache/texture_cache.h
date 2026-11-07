@@ -3038,6 +3038,7 @@ ImageId TextureCache<P>::JoinImages(const ImageInfo& info, GPUVAddr gpu_addr, DA
         }
         if (True(overlap.flags & ImageFlagBits::GpuModified)) {
             PrepareSparseTilesForWrite(new_image);
+            MarkGpuHeld(new_image);
             new_image.flags |= ImageFlagBits::GpuModified;
             const auto& resolution = Settings::values.resolution_info;
             const SubresourceBase base = new_image.TryFindBase(overlap.gpu_addr).value();
@@ -4058,6 +4059,9 @@ void TextureCache<P>::MarkModification(ImageBase& image) {
     } else {
         CompletePartialDownloads(image.cpu_addr, image.guest_size_bytes, &image);
     }
+    if (False(image.flags & ImageFlagBits::GpuModified)) {
+        MarkGpuHeld(image);
+    }
     image.flags |= ImageFlagBits::GpuModified;
     image.modification_tick = ++modification_tick;
     NoteAliasTick(image);
@@ -4067,6 +4071,17 @@ void TextureCache<P>::MarkModification(ImageBase& image) {
     for (const ImageId overlap_id : image.overlapping_images) {
         ReplaceUnwrittenSparse(overlap_id);
     }
+}
+
+template <class P>
+void TextureCache<P>::MarkGpuHeld(ImageBase& image) {
+    if (False(image.flags & ImageFlagBits::Sparse)) {
+        Tegra::Nx2MarkGpuHeld(image.cpu_addr, image.guest_size_bytes);
+        return;
+    }
+    ForEachSparseSegment(image, [](GPUVAddr, DAddr cpu_addr, size_t size) {
+        Tegra::Nx2MarkGpuHeld(cpu_addr, size);
+    });
 }
 
 template <class P>
@@ -4112,6 +4127,7 @@ void TextureCache<P>::SynchronizeAliases(ImageId image_id) {
     image.modification_tick = most_recent_tick;
     NoteAliasTick(image);
     if (any_modified) {
+        MarkGpuHeld(image);
         image.flags |= ImageFlagBits::GpuModified;
     }
     std::ranges::sort(aliased_images, [this](const AliasedImage* lhs, const AliasedImage* rhs) {

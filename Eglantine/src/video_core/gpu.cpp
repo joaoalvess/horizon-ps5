@@ -263,6 +263,24 @@ struct GPU::Impl {
             const char* value = std::getenv("EDEN_NX2_UNSAFE_PREEMPTIVE_READS");
             return value != nullptr && std::strcmp(value, "1") == 0;
         }();
+        static const bool read_wait_to_writer = [] {
+            const char* value = std::getenv("EDEN_NX2_READ_WAIT_TO_WRITER");
+            return value == nullptr || value[0] != '0';
+        }();
+        if (read_wait_to_writer && g_nx2_ampere.load(std::memory_order_relaxed) &&
+            system.GetCurrentHostThreadID() < Core::Hardware::NUM_CPU_CORES) {
+            [[maybe_unused]] static const bool reported = [] {
+                LOG_INFO(HW_GPU, "NX2 CPU reads wait only for the GPU writes to their range "
+                                 "(EDEN_NX2_READ_WAIT_TO_WRITER=0: for all queued GPU work)");
+                return true;
+            }();
+            if (auto area = renderer->ReadRasterizer()->GetUnorderedReadArea(
+                    addr, size, unsafe_preemptive_reads)) {
+                area->completed_generation = 0;
+                return *area;
+            }
+            return gpu_thread.ReadMemory(addr, size, is_async);
+        }
         if (unsafe_preemptive_reads && g_nx2_ampere.load(std::memory_order_relaxed) &&
             system.GetCurrentHostThreadID() < Core::Hardware::NUM_CPU_CORES) {
             auto area = renderer->ReadRasterizer()->GetFlushArea(addr, size);

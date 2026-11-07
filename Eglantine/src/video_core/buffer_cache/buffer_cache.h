@@ -255,9 +255,7 @@ void BufferCache<P>::DownloadMemory(DAddr device_addr, u64 size) {
 
 template <class P>
 void BufferCache<P>::ClearDownload(DAddr device_addr, u64 size) {
-    for (auto& ranges : pending_download_ranges) {
-        ranges.Subtract(device_addr, size);
-    }
+    TrimPendingDownloads(device_addr, size);
     uncommitted_gpu_modified_ranges.Subtract(device_addr, size);
     for (auto& interval_set : committed_gpu_modified_ranges) {
         interval_set.Subtract(device_addr, size);
@@ -835,6 +833,7 @@ void BufferCache<P>::PopAsyncBuffers() {
     async_buffers.pop_front();
     pending_downloads.pop_front();
     pending_download_ranges.pop_front();
+    download_pops.Pop();
 }
 
 template <class P>
@@ -872,6 +871,26 @@ void BufferCache<P>::NoteCpuRead(DAddr addr, size_t size) {
             LOG_INFO(HW_GPU, "CPU-read buffer pages noted: {} (latest {:#x})", noted, addr);
         }
     }
+}
+
+template <class P>
+Tegra::Nx2ReadDependency BufferCache<P>::ReadDependency(DAddr addr, u64 size) {
+    auto dependency = Tegra::Nx2BufferReadDependency(
+        addr, size, download_pops.Popped(),
+        [this](DAddr begin, u64 bytes, auto&& modified) {
+            gpu_modified_ranges.ForEachInRange(begin, bytes, modified);
+        },
+        [this](DAddr begin, u64 bytes, auto&& covered) {
+            u64 index = 0;
+            for (const auto& ranges : pending_download_ranges) {
+                ranges.ForEachInRange(begin, bytes, [&](DAddr start, DAddr end) {
+                    covered(index, start, end);
+                });
+                ++index;
+            }
+        });
+    dependency.trims = download_pops.Trims();
+    return dependency;
 }
 
 template <class P>
@@ -1807,9 +1826,7 @@ void BufferCache<P>::MarkWrittenBuffer(BufferId buffer_id, DAddr device_addr, u3
     // The downloads already taken over this range hold older bytes: when their fences pop
     // they must not write them over this write's result in guest memory, nor drop the range
     // from gpu_modified_ranges (the next fence downloads it instead).
-    for (auto& ranges : pending_download_ranges) {
-        ranges.Subtract(device_addr, size);
-    }
+    TrimPendingDownloads(device_addr, size);
     memory_tracker.MarkRegionAsGpuModified(device_addr, size);
     gpu_modified_ranges.Add(device_addr, size);
     QueueDownload(device_addr, size);

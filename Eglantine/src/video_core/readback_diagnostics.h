@@ -25,13 +25,15 @@ enum class Event : size_t {
     BufferFinish,
     Submit,
     DeviceFinish,
+    UnorderedRead,
+    DownloadWait,
     Count,
 };
 
 inline constexpr std::array<const char*, static_cast<size_t>(Event::Count)> names{
     "ordered_read", "flush_area", "texture_readback", "buffer_readback", "query_readback",
     "download_staging", "deferred_download_staging", "upload_staging", "buffer_finish",
-    "submit", "device_finish",
+    "submit", "device_finish", "unordered_read", "download_wait",
 };
 
 inline bool Enabled() {

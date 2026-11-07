@@ -1012,8 +1012,9 @@ struct Memory::Impl {
         // one the area cache misses is a round trip through the GPU thread (the guest core
         // waits, the GPU thread wakes). With fastmem only pages the buffer cache armed a read
         // trap on, after a GPU write, take that path; the rest read memory directly. The same
-        // rule here: a Switch 2 title's page the GPU never wrote through the buffer cache
-        // (Nx2MarkGpuWritten, kept for the whole session) has nothing to flush.
+        // rule here: a Switch 2 title's page the GPU never wrote through the buffer cache, an
+        // image or a deferred query result (Nx2MarkGpuWritten, Nx2MarkGpuHeld, kept for the
+        // whole session) has nothing to flush.
         // EDEN_PS5_UNWRITTEN_READS=0 sends every miss through the GPU thread again.
         static const bool unwritten_reads_direct = [] {
             const char* value = std::getenv("EDEN_PS5_UNWRITTEN_READS");
@@ -1027,7 +1028,7 @@ struct Memory::Impl {
                 bool written = false;
                 constexpr DAddr page_mask = (DAddr{1} << Tegra::Nx2WrittenPageBits) - 1;
                 for (DAddr page = address & ~page_mask; page < end_address; page += page_mask + 1) {
-                    if (Tegra::Nx2IsGpuWritten(page)) {
+                    if (Tegra::Nx2IsGpuWritten(page) || Tegra::Nx2IsGpuHeld(page)) {
                         written = true;
                         break;
                     }

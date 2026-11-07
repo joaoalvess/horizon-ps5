@@ -333,6 +333,16 @@ public:
     /// AsyncBufferDownloads, GPU writes there are still copied back at fences from now on.
     void NoteCpuRead(DAddr addr, size_t size);
 
+    [[nodiscard]] Tegra::Nx2ReadDependency ReadDependency(DAddr addr, u64 size);
+
+    [[nodiscard]] bool WaitForDownloads(u64 downloads) {
+        return download_pops.WaitPopped(downloads, std::chrono::milliseconds{50});
+    }
+
+    [[nodiscard]] u64 DownloadTrims() const {
+        return download_pops.Trims();
+    }
+
     /// Return true when a region is registered on the cache
     [[nodiscard]] bool IsRegionRegistered(DAddr addr, size_t size);
 
@@ -544,8 +554,9 @@ private:
     /// dispatch, the fencing thread holding the buffer cache while it wrote them), while its CPU
     /// read GPU-written memory at most 64 times in 200 s (counted with reactive flushing) and
     /// the native MME's DMA reads never touched those pages. Without them a fence costs ~1 us
-    /// instead of ~5 and draw setup ~7% less. The titles that do read those pages back are listed
-    /// in Nx2NeedsBufferDownloads (nx2.h). EDEN_NX2_BUFFER_DOWNLOADS=0/1 overrides both.
+    /// instead of ~5 and draw setup ~7% less. Pages the guest CPU does read are still copied back
+    /// (cpu_read_ranges, QueueDownload); titles that need every range copied back are listed in
+    /// Nx2NeedsBufferDownloads (nx2.h). EDEN_NX2_BUFFER_DOWNLOADS=0/1 overrides both.
     bool AsyncBufferDownloads() const {
         static const int forced = [] {
             const char* value = std::getenv("EDEN_NX2_BUFFER_DOWNLOADS");
@@ -611,7 +622,17 @@ private:
     /// fence pops. A write to a range after a download was taken removes it from that download
     /// (and every other pending one): its bytes are older than the write.
     std::deque<Common::RangeSet<DAddr>> pending_download_ranges;
+    Tegra::Nx2BufferDownloads download_pops;
     std::optional<Async_Buffer> current_buffer;
+
+    void TrimPendingDownloads(DAddr addr, u64 size) {
+        for (auto& ranges : pending_download_ranges) {
+            if (ranges.Intersects(addr, size)) {
+                ranges.Subtract(addr, size);
+                download_pops.Trim();
+            }
+        }
+    }
 
     std::deque<Async_Buffer> async_buffers_death_ring;
 

@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <atomic>
 #include <functional>
@@ -27,13 +29,12 @@ inline std::atomic<u64> g_nx2_program_id{0};
 
 // Titles whose guest side reads GPU-written buffer data through a path the buffer cache does not
 // see, so their buffers must be copied back to guest memory at every fence
-// (BufferCache::AsyncBufferDownloads, EDEN_NX2_BUFFER_DOWNLOADS). 0400A3A01EE4C000 is Pokemon
-// Pokopia: with the copy-back off its sky is black or flickers. Open work: find what reads it,
-// then the list goes.
+// (BufferCache::AsyncBufferDownloads, EDEN_NX2_BUFFER_DOWNLOADS). None is known. Pokemon Pokopia
+// (0400A3A01EE4C000) was listed for a black or flickering sky, but its CPU reads GPU-written
+// buffers through GetFlushArea, which copies back the pages it reads (cpu_read_ranges);
+// EDEN_NX2_BUFFER_DOWNLOADS=1 restores the copy-back of every range.
 inline bool Nx2NeedsBufferDownloads() {
     switch (g_nx2_program_id.load(std::memory_order_relaxed)) {
-    case 0x0400A3A01EE4C000ULL:
-        return true;
     default:
         return false;
     }
@@ -85,9 +86,44 @@ inline void Nx2MarkGpuWritten(u64 device_address, u64 size) {
     }
 }
 
+inline std::array<std::atomic<u64>, (u64{1} << (36 - Nx2WrittenPageBits)) / 64> g_nx2_gpu_held_pages{};
+
+inline void Nx2MarkGpuHeld(u64 device_address, u64 size) {
+    static const bool enabled = [] {
+        const char* value = std::getenv("EDEN_NX2_GPU_HELD_PAGES");
+        return value == nullptr || value[0] != '0';
+    }();
+    if (!enabled || size == 0) {
+        return;
+    }
+    const u64 first = device_address >> Nx2WrittenPageBits;
+    const u64 last = std::min<u64>((device_address + size - 1) >> Nx2WrittenPageBits,
+                                   g_nx2_gpu_held_pages.size() * 64 - 1);
+    for (u64 index = first / 64; first <= last && index <= last / 64; ++index) {
+        const u64 low = index == first / 64 ? first % 64 : 0;
+        const u64 high = index == last / 64 ? last % 64 : 63;
+        const u64 bits = (~u64{0} >> (63 - high)) & (~u64{0} << low);
+        auto& word = g_nx2_gpu_held_pages[index];
+        if ((word.load(std::memory_order_relaxed) & bits) != bits) {
+            word.fetch_or(bits, std::memory_order_relaxed);
+        }
+    }
+}
+
+[[nodiscard]] inline bool Nx2IsGpuHeld(u64 device_address) {
+    const u64 page = device_address >> Nx2WrittenPageBits;
+    if (page >= g_nx2_gpu_held_pages.size() * 64) {
+        return false;
+    }
+    return (g_nx2_gpu_held_pages[page / 64].load(std::memory_order_relaxed) >> (page % 64)) & 1;
+}
+
 /// A new emulation session starts: no page has been written by its GPU yet.
 inline void Nx2ClearGpuWrittenPages() {
     for (auto& word : g_nx2_gpu_written_pages) {
+        word.store(0, std::memory_order_relaxed);
+    }
+    for (auto& word : g_nx2_gpu_held_pages) {
         word.store(0, std::memory_order_relaxed);
     }
     for (auto& stamp : g_nx2_page_stamps) {
@@ -146,6 +182,98 @@ void Nx2SynchronizeGpuWrittenCommands(GPUVAddr address, size_t size, Drain&& dra
         drain();
         flush();
     }
+}
+
+enum class Nx2ReadWait { None, Downloads, Ordered };
+
+struct Nx2ReadDependency {
+    Nx2ReadWait wait{Nx2ReadWait::None};
+    u64 downloads{};
+    u64 trims{};
+};
+
+template <typename ForEachGpuModified, typename ForEachPendingDownload>
+[[nodiscard]] Nx2ReadDependency Nx2BufferReadDependency(u64 address, u64 size, u64 popped_downloads,
+                                                        ForEachGpuModified&& for_each_gpu_modified,
+                                                        ForEachPendingDownload&& for_each_pending_download) {
+    Nx2ReadDependency dependency{};
+    std::vector<std::pair<u64, u64>> covered;
+    for_each_gpu_modified(address, size, [&](u64 begin, u64 end) {
+        if (dependency.wait == Nx2ReadWait::Ordered) {
+            return;
+        }
+        covered.clear();
+        for_each_pending_download(begin, end - begin, [&](u64 index, u64 covered_begin, u64 covered_end) {
+            covered.emplace_back(covered_begin, covered_end);
+            dependency.downloads = (std::max)(dependency.downloads, popped_downloads + index + 1);
+        });
+        std::ranges::sort(covered);
+        u64 reached = begin;
+        for (const auto& [covered_begin, covered_end] : covered) {
+            if (covered_begin > reached) {
+                break;
+            }
+            reached = (std::max)(reached, covered_end);
+        }
+        dependency.wait = reached >= end ? Nx2ReadWait::Downloads : Nx2ReadWait::Ordered;
+    });
+    return dependency;
+}
+
+class Nx2BufferDownloads {
+public:
+    [[nodiscard]] u64 Popped() const {
+        return popped.load(std::memory_order_acquire);
+    }
+
+    [[nodiscard]] u64 Trims() const {
+        return trims.load(std::memory_order_acquire);
+    }
+
+    void Pop() {
+        {
+            std::scoped_lock lock{mutex};
+            popped.fetch_add(1, std::memory_order_acq_rel);
+        }
+        popped_changed.notify_all();
+    }
+
+    void Trim() {
+        trims.fetch_add(1, std::memory_order_acq_rel);
+    }
+
+    [[nodiscard]] bool WaitPopped(u64 count, std::chrono::nanoseconds timeout) {
+        if (Popped() >= count) {
+            return true;
+        }
+        std::unique_lock lock{mutex};
+        return popped_changed.wait_for(lock, timeout, [&] { return Popped() >= count; });
+    }
+
+private:
+    std::atomic<u64> popped{};
+    std::atomic<u64> trims{};
+    std::mutex mutex;
+    std::condition_variable popped_changed;
+};
+
+inline constexpr u32 Nx2ReadWaitAttempts = 4;
+
+template <typename Classify, typename WaitPopped, typename Trims>
+[[nodiscard]] bool Nx2ReadAfterItsWriters(Classify&& classify, WaitPopped&& wait_popped, Trims&& trims) {
+    for (u32 attempt = 0; attempt < Nx2ReadWaitAttempts; ++attempt) {
+        const Nx2ReadDependency dependency = classify();
+        if (dependency.wait != Nx2ReadWait::Downloads) {
+            return dependency.wait == Nx2ReadWait::None;
+        }
+        if (!wait_popped(dependency.downloads)) {
+            return false;
+        }
+        if (trims() == dependency.trims) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // NVN2 queues release their progress values into the second page of a two-page GPU-accessible
