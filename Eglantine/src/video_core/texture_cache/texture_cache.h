@@ -317,6 +317,15 @@ void TextureCache<P>::RunGarbageCollector() {
 
 template <class P>
 void TextureCache<P>::ApplyThresholdOverrides(bool log) {
+    // A Switch 2 title shares the console's one 12 GiB pool with its own memory (~4.5 GB on Mario
+    // Kart World), Eden's heap and the driver. Images held to the thresholds the pool alone would
+    // allow (4.5/5.3 GB) ran it out in 3 minutes; held to 3.5/4 GB the title ran 294 s to over
+    // 6 minutes, at the same FPS (3/3.5 GB re-uploaded enough to stall 8-11 s). A ceiling only:
+    // lower computed thresholds stay, and the variables below still override both.
+    if (Settings::CurrentProgramIsSwitch2()) {
+        expected_memory = (std::min)(expected_memory, u64{3584} << 20);
+        critical_memory = (std::min)(critical_memory, u64{4096} << 20);
+    }
     // EDEN_NX2_TC_EXPECTED_MIB / EDEN_NX2_TC_CRITICAL_MIB override the collector's thresholds.
     for (const auto& [name, target] : {std::pair{"EDEN_NX2_TC_EXPECTED_MIB", &expected_memory},
                                        std::pair{"EDEN_NX2_TC_CRITICAL_MIB", &critical_memory}}) {
