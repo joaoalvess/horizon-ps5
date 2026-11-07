@@ -15,12 +15,12 @@ TEST_CASE("Compute storage bindings cover every shader descriptor and mask bit",
     STATIC_REQUIRE(count <= std::numeric_limits<decltype(State::enabled_compute_storage_buffers)>::digits);
     STATIC_REQUIRE(count <= std::numeric_limits<decltype(State::written_compute_storage_buffers)>::digits);
     std::array<VideoCommon::Binding, count> bindings{};
-    u32 enabled{};
-    u32 written{};
+    u64 enabled{};
+    u64 written{};
     for (u32 index = 0; index < count; ++index) {
         bindings[index].size = index + 1;
-        enabled |= 1U << index;
-        written |= (index % 2) << index;
+        enabled |= u64{1} << index;
+        written |= u64{index % 2} << index;
     }
     size_t visited{};
     while (enabled != 0) {
