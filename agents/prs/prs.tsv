@@ -1,0 +1,146 @@
+repo	pr	draft	base	head	updated	added	removed	files	author	title
+Djihads80/Eglantine	660	false	nx2-experimental	f816939989	2026-11-06	4	2	1	Kabosune	loader: prevent default NUP title from overwriting en-us title
+Djihads80/Eglantine	655	false	scratch/oot-shader-lab	0f110e30ca	2026-11-06	6	0	1	jojo-chaechae	macro: flush pending query writes before native MME DMA reads
+Djihads80/Eglantine	652	true	scratch/oot-shader-lab	90f223d1d3	2026-11-05	13585	350	122	DrThiago92	NX2: OOT rendering and performance checkpoint
+Djihads80/Eglantine	650	false	nx2-experimental	5720982784	2026-11-05	3035	1	25	FrankieDedo	Eglantine - Switch 1 Bridge: fork that streams to a dedicated nsp/nro client
+Djihads80/Eglantine	646	false	nx2-experimental	c6cf43efe8	2026-11-05	72	0	2	Alleexxi	Add Font Service needed in wonder ns2e
+Djihads80/Eglantine	640	false	nx2-experimental	b695942a4f	2026-11-05	1	1	1	CloudP4bbs	qt: save screenshots to the configured directory without a dialog by default
+Djihads80/Eglantine	630	false	nx2	eba05370d8	2026-11-05	166	31	5	EvelynSwitch2	Fix Welcome Tour startup and native texture rendering
+Djihads80/Eglantine	624	false	nx2	33782ded11	2026-11-05	383	0	7	pentalex	[HUMANMADE] input_common: Add DualSense HD rumble support 
+Djihads80/Eglantine	614	true	nx2	b536a971a5	2026-11-06	874	147	16	A-Man-With-A-Plan-dev	video_core, shader: fix Ocarina of Time's black 3D scene in gameplay
+Djihads80/Eglantine	613	false	nx2	08d9b0b619	2026-11-05	14	5	1	frenziedcoder	kernel: reject wrapping addresses in 64-bit WaitIfEqual read
+Djihads80/Eglantine	611	false	nx2	70fa082312	2026-11-05	556	288	22	Takoroka	Switchbrew names
+Djihads80/Eglantine	609	false	nx2	cda9612e4f	2026-11-06	227	124	13	Mcm190	video_core: reduce native readbacks and fix MKW pacing
+Djihads80/Eglantine	605	false	nx2	f3a3e38ebd	2026-11-05	379	83	23	clshortfuse	feat: Add HDR support
+Djihads80/Eglantine	602	false	nx2	28c092d698	2026-11-06	38	6	1	Kabosune	loader: read NUP metadata from base package even if ExeFS is empty
+Djihads80/Eglantine	600	false	nx2	8f114a0e39	2026-11-05	25	0	1	CloudP4bbs	video_core: add EDEN_NX2_PIPE_TRACE to name the pipeline that never finishes
+Djihads80/Eglantine	594	false	nx2	2481534116	2026-11-05	37	8	5	hugo1120	[HUMANMADE] docs: fix stale tools listing and broken links
+Djihads80/Eglantine	593	false	nx2	dce3f525f4	2026-11-05	22	14	2	A-Man-With-A-Plan-dev	video_core: wait for back thread idle hook in GpuSplit::Drain
+Djihads80/Eglantine	591	false	nx2	edc80f0bef	2026-11-05	233	0	2	Plackett	[HUMANMADE] Add NixOS flake so Eglantine can be installed as package
+Djihads80/Eglantine	576	false	nx2	59c4bde459	2026-11-05	188	46	6	A-Man-With-A-Plan-dev	video_core, shader_recompiler: fix Ampere/Maxwell lowering and texture cache lookups
+Djihads80/Eglantine	573	false	nx2	a7fafb8ad2	2026-11-04	90	10	4	cakezara	Switch 2 ProCon motion support
+Djihads80/Eglantine	570	false	nx2	cb113ac72b	2026-11-05	224	35	9	Sssnowyyy	vulkan: back sparse terrain arrays at low detail without sparse residency
+Djihads80/Eglantine	568	false	nx2	385fe4fa0c	2026-11-04	337	71	19	vibecodekun	Fast Fusion: Menu Vehicle Rendering and Minimap Fixes
+Djihads80/Eglantine	563	false	nx2	ffbaa34331	2026-11-05	5	1	1	CloudP4bbs	video_core: make the experimental geometry stage opt-in instead of default
+Djihads80/Eglantine	562	false	nx2	68513d70cd	2026-11-04	132	0	7	Mvii7	buffer_cache: skip upload scans of buffers the guest has not written
+Djihads80/Eglantine	559	false	nx2	4af005a3e3	2026-11-04	463	68	16	FZout	Adds opt-in automatic save-data backups and improves recovery
+Djihads80/Eglantine	557	false	nx2	826b510578	2026-11-05	390	8	15	101Leafy	Vulkan: HDR10 output when a Switch 2 game is told the display is HDR
+Djihads80/Eglantine	554	false	nx2	35280d587b	2026-11-05	934	38	20	Alleexxi	Fix/totk texture layout
+Djihads80/Eglantine	553	true	fix/missing-mkw-effects	13c88a9599	2026-11-04	116	4	8	snowstormxd	Fix Mario Kart World wave displacement and collision heights
+Djihads80/Eglantine	552	false	nx2	2a83ecf706	2026-11-04	545	159	11	TheRealJoelmatic	Mario Kart World LAN play support
+Djihads80/Eglantine	550	false	nx2	ee0c733f8d	2026-11-04	10	2	2	FZout	Adds AV1 decoder support to the MinGW PGO build by installing dav1d 
+Djihads80/Eglantine	549	false	nx2	ebd31cfeee	2026-11-04	6	1	1	FZout	Fix Fastmem initialization on systems with 16 KiB pages
+Djihads80/Eglantine	548	false	nx2	4d35e52fea	2026-11-04	24	7	1	CloudP4bbs	video_core: add EDEN_NX2_DROP_TESS for drivers that refuse patch list pipelines
+Djihads80/Eglantine	547	false	nx2	adf79520ae	2026-11-04	4	5	1	FZout	Fixes Mario Kart World's Dynamic FPS presentation pacing by ensuring the VI2 service identifies the process responsible for the current frame presentation.
+Djihads80/Eglantine	544	false	nx2	9b603f53a7	2026-11-04	5	1	1	101Leafy	vulkan: round the alpha test reference to 1/255 in the pipeline key
+Djihads80/Eglantine	543	false	nx2	8d7bcc30e0	2026-11-05	111	23	6	Sssnowyyy	nvdrv: copy command lists submitted behind a queued GPU map later
+Djihads80/Eglantine	541	false	nx2	023543376c	2026-11-05	1	1	1	burning-berk	Update vulkan_device.cpp
+Djihads80/Eglantine	538	false	nx2	3d35a7de21	2026-11-04	227	97	6	pretend7979	Windows: use high-resolution timers for Event timed waits
+Djihads80/Eglantine	534	false	nx2	34bf6746b3	2026-11-04	724	5	6	ymatrix1	ns: add the controller button icons to the standard font for Switch 2 titles
+Djihads80/Eglantine	532	false	nx2	0842962c25	2026-11-06	842	73	13	pretend7979	StarFox compatibility update
+Djihads80/Eglantine	527	false	nx2	81b20401e5	2026-11-04	196	0	3	ymatrix1	ci: run Vulkan tests on Mesa lavapipe with the validation layer
+Djihads80/Eglantine	525	false	nx2	52f27291d5	2026-11-04	129	0	1	ymatrix1	ci: run dynarmic unit tests
+Djihads80/Eglantine	503	false	nx2	5bec2850ba	2026-11-06	7575	567	140	godpow	Android: Switch 2 fixes from an Odin 3 (Mario Kart World, Fire Emblem: Fortune's Weave)
+Djihads80/Eglantine	502	false	nx2	5a104e829a	2026-11-04	33	6	2	aidankinzett	VDEC texchache fixes (Yoshi)
+Djihads80/Eglantine	488	false	nx2	22f947f5e2	2026-11-04	9	0	1	ymatrix1	host1x: decode Switch 2 movies with frame threads
+Djihads80/Eglantine	483	false	nx2	3524c7ba21	2026-11-04	52	0	1	ymatrix1	ci: add CodeQL C/C++ scan
+Djihads80/Eglantine	480	false	nx2	84f09b57d3	2026-11-04	113	0	2	ymatrix1	ci: fix the PR template and warn on incomplete descriptions
+Djihads80/Eglantine	477	false	nx2	68e960b375	2026-11-04	94	0	2	ymatrix1	ci: add gitleaks secret scan
+Djihads80/Eglantine	474	false	nx2	0a856bb00f	2026-11-05	67	30	5	ymatrix1	audio_core: register managers by owner, synchronize registration with the audio thread
+Djihads80/Eglantine	472	false	nx2	3fd6841ce7	2026-11-05	1167	178	68	Logan7432	fix/switch-sports-resort
+Djihads80/Eglantine	468	false	nx2	43f23d6c18	2026-11-04	199	0	3	ymatrix1	ci: add ASan/UBSan and TSan test workflow
+Djihads80/Eglantine	462	false	nx2	29d5d7821e	2026-11-05	184	46	17	failaip12	Fix bugs found by an ASan, UBSan and TSan sweep
+Djihads80/Eglantine	427	false	nx2	a0c091af65	2026-11-04	23	3	4	Sssnowyyy	vulkan: fix two macOS crashes (mesh pipelines on MoltenVK, swapchain recreation)
+Djihads80/Eglantine	426	false	nx2	6008b28f90	2026-11-04	64	3	4	kraibse	Skip task/mesh graphics pipelines on devices without VK_EXT_mesh_shader
+Djihads80/Eglantine	425	false	nx2	7227b4e183	2026-11-04	48	11	3	kipavy	ci: add native Windows ARM64 build
+Djihads80/Eglantine	405	true	nx2	681afc16be	2026-11-04	1575	15	16	Sssnowyyy	core: Hypervisor.framework CPU backend for Apple Silicon
+Djihads80/Eglantine	396	false	nx2	bad2ebfe3f	2026-11-03	2	2	2	FZout	Add Android Support for Scanning NUP Game Files
+Djihads80/Eglantine	394	true	nx2	6249b2e8ee	2026-11-04	84	2	2	jojo-chaechae	ci: restore Android APK builds and add a Ludashi-package APK
+Djihads80/Eglantine	383	false	nx2	b185ddda2a	2026-11-03	13	6	4	aidankinzett	android: detect .nup files in the game list (#381)
+Djihads80/Eglantine	380	false	nx2	1a34386cc9	2026-11-03	45	1	2	taljeri	Windows: select the AV1 FFmpeg package, and document MSVC build pitfalls
+Djihads80/Eglantine	366	false	nx2	56667f01e0	2026-11-05	25	5	5	SavageCore	file_sys: apply LayeredFS to non-updatable RomFS (NUP)
+Djihads80/Eglantine	353	false	nx2	be182b4739	2026-11-03	162	43	10	Takoroka	ci: add experimental clang-cl and fully static MinGW Windows builds
+Djihads80/Eglantine	344	true	nx2	7216c23ad0	2026-11-03	32	5	2	QcCodingBear	common: fix Windows fallback memory release and repeated cleanup
+Djihads80/Eglantine	343	false	nx2	f4eea1b0b2	2026-11-02	7	1	2	FZout	Increase Storage Buffer Capacity to Fix Rejected Shader Bindings
+Djihads80/Eglantine	342	false	nx2	c547743ece	2026-11-03	116	24	1	FZout	Fix Loose ExeFS Loading with Extracted Update RomFS
+Djihads80/Eglantine	331	false	nx2	a25ad9582e	2026-11-02	68	6	4	mushymeow	Enabled Discord Rich Presence with game names and covers
+Djihads80/Eglantine	330	true	nx2	22e0e41d6b	2026-11-03	111	7	9	nowhere02	Fix indirect global address tracking and NVN buffer slots
+Djihads80/Eglantine	329	false	nx2	c73deafea9	2026-11-02	162	14	9	failaip12	nx2: survive corrupted GPU commands, lock the kind map, fix swapchain recreation
+Djihads80/Eglantine	328	false	nx2	3cb8084128	2026-11-02	11	3	4	daniel-cabral	loader: find a loose dump's romfs folder regardless of case
+Djihads80/Eglantine	317	false	nx2	0fcb689efb	2026-11-03	5	0	2	FZout	Add Filename Fallback for NUP Files Without Title Metadata
+Djihads80/Eglantine	310	true	nx2	6387952818	2026-11-03	157	23	9	neoluigi4123	Neo.ai/gpu buffer readback optimization
+Djihads80/Eglantine	301	true	nx2-experimental	5bfdb6836b	2026-11-03	159	7	7	nowhere02	Support additional Switch 2 shader forms and storage buffers
+Djihads80/Eglantine	277	true	nx2	cac42ff515	2026-11-03	45	4	3	nowhere02	texture_cache: reduce descriptor table allocations
+Djihads80/Eglantine	276	true	nx2	30583fc85c	2026-11-03	11	6	3	nowhere02	vulkan: release gathered buffers when their sources are removed
+Djihads80/Eglantine	269	false	nx2	2bc43960ea	2026-11-03	5877	856	159	cblock85	Upstream mac fixes
+Djihads80/Eglantine	250	false	nx2	405bcb5fb5	2026-11-03	25	5	1	CloudP4bbs	texture_cache: cap the collector at 60% and 75% of the driver budget
+Djihads80/Eglantine	245	false	nx2	be86283e0d	2026-11-04	36	12	3	rdenno	game_list: fix two crashes when scanning game directories
+Djihads80/Eglantine	241	false	nx2	33080f5c2c	2026-11-03	2320	101	62	cblock85	Mac
+Djihads80/Eglantine	229	false	nx2	25b4cf91a5	2026-11-03	380	0	2	ReGiulio	UI Restyle
+Djihads80/Eglantine	222	false	nx2	f007d54b94	2026-11-03	18	2	1	CloudP4bbs	nx2/ampere: lower the FFMA register form (0x598-0x59f)
+Djihads80/Eglantine	178	false	nx2	742ab25c36	2026-11-03	7	4	1	jojo-chaechae	spirv: define the storage write CAS loop whenever 8/16-bit writes use it
+Djihads80/Eglantine	176	false	nx2	45da71a8be	2026-11-03	9	4	1	jojo-chaechae	ns: Separate builtin font storage into its own vector
+Djihads80/Eglantine	170	false	nx2	0e7ec2fb91	2026-11-03	75	10	4	diamond3500	Fix replacement texture handling in AMD implementation
+Djihads80/Eglantine	159	true	nx2	2f475fec3b	2026-11-03	7	2	1	neoluigi4123	Keep FSEL source .neg/.abs when lowering
+Djihads80/Eglantine	157	false	nx2	0c959043fc	2026-11-04	8	2	1	ymatrix1	video_core: dma pusher branchless method increment, acquire check only for puller methods
+Djihads80/Eglantine	154	false	nx2	c38a13802c	2026-11-03	215	183	43	lesmmwe	rebrand to Eglantine and add adaptive settings
+Djihads80/Eglantine	142	false	nx2	8f2e3ebd36	2026-11-03	173	28	11	uwutaube	Perf/nx2 memory stutter (fix for frame drops and stutter)
+Djihads80/Eglantine	134	false	nx2	a21c9b5d9f	2026-11-04	97	26	10	ymatrix1	video_core: granular profiling for GPU split, push parsing, cache locks, and pipeline metrics
+Djihads80/Eglantine	129	false	nx2	56cc21e230	2026-11-05	33	14	4	Sssnowyyy	fix a leak on guest thread exit and a shutdown crash in aud:u
+Djihads80/Eglantine	123	false	nx2	dc4efdcad6	2026-11-03	346	30	9	rdenno	nx2: Yoshi and the Mysterious Book demo boots to the title screen
+Djihads80/Eglantine	83	false	nx2	5ec3ba8b30	2026-11-03	144	35	6	Wael3rd	MKW : shader_cache: lower stutter on first loading
+Djihads80/Eglantine	71	false	nx2	1f56b5b6fc	2026-11-03	160	66	8	Gabrieli2806	Improve metadata and full folder sizes for extracted game entries
+Djihads80/Eglantine	61	false	nx2	3d0ab32c3c	2026-11-03	22	1	1	arisqz	MKW 1.8.0: Fixed black textures on AMD
+Djihads80/Eglantine	35	false	nx2	ef65ec709d	2026-11-02	13	3	2	givethesourceplox	yuzu_cmd: update the window title on the main thread
+Djihads80/Eglantine	28	false	nx2	5f9c25d75f	2026-11-02	44	1	3	givethesourceplox	nx2: execute command lists as submitted (fixes frames stepping back)
+Djihads80/Eglantine	27	false	nx2	641faa9edb	2026-11-03	3517	175	54	gradenGnostic	nx2: native Switch 2 bring-up through title rendering (Welcome Tour, Kirby Air Riders)
+Djihads80/Eglantine	19	false	nx2	5fdba1caf8	2026-11-03	15	15	5	Takoroka	nx2: log per-call and periodic diagnostic lines at debug level
+Djihads80/Eglantine	12	true	nx2	59d131284b	2026-11-03	84	0	2	app/copilot-swe-agent	Fix MinGW Qt host/arch mismatch in `windows-x86_64-mingw` release job
+Djihads80/Eglantine	2	true	master	447431d896	2026-11-03	16092	241	199	yumekiru	Alternate NS2 patch set with keyboard and macro performance support
+zortos293/Lichii	210	false	nx2	c29cc949a7	2026-11-06	35	0	3	persluffy-cl	vulkan: build three Ocarina of Time shaders unoptimized on AMD's proprietary driver
+zortos293/Lichii	206	false	nx2	2b5cfdd0b9	2026-11-06	47	41	1	jpkto	shader: retry compare-exchange loops with the value the exchange returned
+zortos293/Lichii	204	false	nx2	0bdc4ad004	2026-11-06	15	3	2	vouion	video_core: flush the query cache before macro DMA reads under the GPU split
+zortos293/Lichii	203	false	nx2	0af656cc7f	2026-11-06	9	3	2	DrSergioRFilho	file_sys, config: apply LayeredFS mods to NUP titles; assert nested array index against the innermost array
+zortos293/Lichii	199	false	nx2	5429a78bc9	2026-11-06	7	4	1	Frysix	common: write each console log line in one call on Windows
+zortos293/Lichii	197	false	nx2	237ab47263	2026-11-06	19	0	2	axsddlr	shader_cache: skip the cached rejection path for compute dispatches
+zortos293/Lichii	195	false	nx2	7dcfbbf5dd	2026-11-06	6	4	2	Hexveil404	ci: decode AV1 in the MinGW build with MSYS2's FFmpeg
+zortos293/Lichii	194	false	nx2	438c03ab74	2026-11-06	2376	210	35	zortos293	video_core: port scoped Frizti performance and FSR3 fixes
+zortos293/Lichii	192	false	nx2	b8e8e0a5c0	2026-11-06	11	16	2	SinCuri0	video_core: store guarded and mesh pipelines in the Vulkan disk cache
+zortos293/Lichii	189	false	nx2	619c7d04ea	2026-11-06	44	11	7	vouion	shader: shadow the gradient and global atomic registers of TXD and ATOMG
+zortos293/Lichii	186	false	nx2	0121c0dd57	2026-11-05	9	11	1	Frysix	common: name threads on MinGW builds too
+zortos293/Lichii	185	false	nx2	7e2a6a78f8	2026-11-06	17	0	1	vouion	texture_cache: land deferred clears before non-pass image writes
+zortos293/Lichii	182	false	nx2	1b00846fd0	2026-11-06	216	6	10	atk3001	debug server: frame_times for guest present intervals
+zortos293/Lichii	180	false	nx2	ce9a344323	2026-11-05	431	82	28	clshortfuse	feat: add native HDR presentation
+zortos293/Lichii	179	true	perf/oot-gpu-thread	3ce0ab7106	2026-11-06	696	12	14	tibzejoker	perf/oot-gpu-thread: narrower split waits and live experiment switches (~34 -> ~49 fps)
+zortos293/Lichii	178	false	nx2	95a227b710	2026-11-06	101	9	4	tibzejoker	video_core: cheaper split back-thread bookkeeping for storage buffers and instance loops
+zortos293/Lichii	177	false	nx2	e8fe1e9d2e	2026-11-05	11	2	1	mja00	fix(yuzu): support wayland for performance overlay
+zortos293/Lichii	176	false	nx2	dbcbe547b3	2026-11-05	9	2	1	mja00	perf(buffer_cache): upload native 64 KiB uniform banks
+zortos293/Lichii	175	false	nx2	2aea767bb3	2026-11-05	108	62	3	mja00	perf(video_core): cache storage buffer
+zortos293/Lichii	174	false	nx2	7221023ed4	2026-11-05	83	164	2	mja00	perf(shader): unroll each K8 group of the software HMMA
+zortos293/Lichii	173	false	nx2	ee139bdeef	2026-11-05	31	2	2	mja00	fix(shader): keep depth-compare images float when read int
+zortos293/Lichii	172	false	nx2	9b63f425d2	2026-11-05	6	0	1	vouion	core: log the host clock calibration at boot
+zortos293/Lichii	170	false	nx2	98ff8985ac	2026-11-06	79	3	5	janvitos	audio: don't pad a sysmix block with silence while the host has audio queued
+zortos293/Lichii	168	false	nx2	d06ea45b03	2026-11-05	54	5	3	vouion	audio: account retried and padded sysmix frames and log both clocks
+zortos293/Lichii	167	false	nx2	4b7e758584	2026-11-05	32	8	1	vouion	tests: compare only visible pixels in nx2 video scaler tests
+zortos293/Lichii	166	false	nx2	15377bf319	2026-11-06	2875	102	47	DrSergioRFilho	video_core: opt-in split-pipeline switches and fixes from the Ocarina of Time 30 fps work
+zortos293/Lichii	164	false	nx2	80a144844f	2026-11-05	8	3	2	vouion	build: compile with clang-cl on Windows (NOMINMAX and FARPROC casts)
+zortos293/Lichii	161	false	nx2	64bb6fe0d7	2026-11-06	1433	413	56	999sian	perf: reduce Ocarina of Time timing and GPU submission overhead
+zortos293/Lichii	160	false	nx2	170b078205	2026-11-06	24	5	3	janvitos	loader: fail the NSO load when ZBIC decompression fails (#95)
+zortos293/Lichii	159	false	nx2	4df372950c	2026-11-06	6	1	1	Walnutoast830	file_sys: fall back to the loaded RomFS for program index 0
+zortos293/Lichii	149	false	nx2	ae7037b650	2026-11-05	31	11	6	chuppatricky	Fix OoT split-thread deadlock, FSR3 frame-gen interpolation, and RED/SURED register shadowing
+zortos293/Lichii	147	false	nx2	9218296008	2026-11-05	222	13	4	nyakuoff	buffer_cache: batch CPU-readback ranges into one GPU wait
+zortos293/Lichii	143	false	nx2	16310c1d02	2026-11-06	346	5	17	felipecsl	video_core: don't emulate tensor programs on Mesa's Intel driver; stand in for Ocarina's upscaler
+zortos293/Lichii	114	true	nx2	01ee235c17	2026-11-05	76	15	3	zortos293	video_core: make GPU clock Boost and Overclock scale Ampere GPU time
+zortos293/Lichii	28	false	nx2	62af2b45d1	2026-11-03	45	1	2	taljeri	Windows: select the AV1 FFmpeg package, and document MSVC build pitfalls
+zortos293/Lichii	26	false	nx2	691d073646	2026-11-03	1236	106	12	sagaopc	Nup from build 168
+heydemoura/EglantinePS5	48	false	perf/jit-fast-paths	9ac3907001	2026-11-06	30	35	8	heydemoura	Phase 3d: enable the JIT direct table, page reuse and fast paths by default
+heydemoura/EglantinePS5	47	false	perf/jit-page-reuse-backport	bf09416b3a	2026-11-05	335	1	4	heydemoura	Phase 3c: JIT fast paths (opt-in), backported from ProsperoEden
+heydemoura/EglantinePS5	46	false	main	5e8cfe5118	2026-11-05	718	0	5	heydemoura	Phase 3b: JIT page reuse (opt-in), backported from ProsperoEden
+heydemoura/EglantinePS5	42	false	main	321bec21d0	2026-11-05	483	15453	53	faidancroswer-creator	Update/lichii core
+heydemoura/EglantinePS5	30	false	main	a8e4ab0045	2026-11-05	185	0	1	heydemoura	Plan the next stability and performance work
+heydemoura/EglantinePS5	20	true	perf/mkw-core-draw-path	11123d6e6d	2026-11-04	1206	15	9	heydemoura	MKW memory: device memory from 2 MiB pieces, budget counted once, guest pager
+heydemoura/EglantinePS5	19	false	main	2beff9b413	2026-11-03	16	4	2	jeanvelezdata	Pin host threads on the PS5: take APIC IDs from CPUID leaf 1
+heydemoura/EglantinePS5	11	true	main	42f6e493b6	2026-11-03	17460	217	69	heydemoura	Use pinned PS5 RADV, bound shader retention, and fix split loading
+heydemoura/EglantinePS5	10	true	main	f56bc49fb6	2026-11-03	20181	181	75	heydemoura	Improve Mario Kart loading and preserve PS5 performance experiments
+heydemoura/EglantinePS5	8	false	main	98caab424d	2026-11-02	15209	5	15	heydemoura	Document Selevet PS5/MKW tuning experiments and 60 FPS priorities
+heydemoura/EglantinePS5	2	false	main	e0b9f8d6fb	2026-11-01	935	38	25	heydemoura	Enable Bananza startup and tunnel rendering on PS5
