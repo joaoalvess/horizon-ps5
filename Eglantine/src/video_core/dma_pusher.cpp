@@ -1013,10 +1013,11 @@ void DmaPusher::FlushGpuWrittenCommands(GPUVAddr address, size_t size) {
     // within the last EDEN_NX2_LIST_RECENT_WORDS of ring traffic (4M, about ten frames) still
     // waits, as does a list that is dirty in the caches (its flush reads back through the back's
     // scheduler, which the back must not be using) or has a noted writer queued. Logged per
-    // 2,000 lists. EDEN_NX2_LIST_DRAIN=1 restores the wait before every such list; =0 never
-    // waits (experiment: the flush then races the back). Skipping the waits measured no frame
-    // rate gain at that title (the guest's own frame loop sets its frame time), so the wait before
-    // every such list stays the default; EDEN_NX2_LIST_DRAIN=recent turns the gate on.
+    // 2,000 lists, at most every 10 s. EDEN_NX2_LIST_DRAIN=1 restores the wait before every
+    // such list; =0 never waits (experiment: the flush then races the back). Skipping the
+    // waits measured no frame rate gain at that title (the guest's own frame loop sets its frame
+    // time), so the wait before every such list stays the default; EDEN_NX2_LIST_DRAIN=recent
+    // turns the gate on.
     static const int list_drain = [] {
         const char* value = std::getenv("EDEN_NX2_LIST_DRAIN");
         if (value == nullptr) return 1;
@@ -1029,6 +1030,7 @@ void DmaPusher::FlushGpuWrittenCommands(GPUVAddr address, size_t size) {
     }();
     struct ListStats {
         u64 lists{}, waited{}, words{}, needed{}, writer_ahead{}, dirty{}, skipped{};
+        std::chrono::steady_clock::time_point logged{};
     };
     static ListStats stats;
     const auto translate = [&](GPUVAddr page) { return memory_manager.GpuToCpuAddress(page); };
@@ -1067,7 +1069,9 @@ void DmaPusher::FlushGpuWrittenCommands(GPUVAddr address, size_t size) {
                 ++stats.skipped;
             }
             if (consumed < write && pages_marked_after(consumed)) ++stats.needed;
-            if (stats.lists % 2000 == 0) {
+            if (stats.lists % 2000 == 0 &&
+                std::chrono::steady_clock::now() - stats.logged >= std::chrono::seconds{10}) {
+                stats.logged = std::chrono::steady_clock::now();
                 LOG_INFO(HW_GPU, "GPU-written lists: {} checked, {} waited for the back ({} words each), "
                          "{} needed (a page marked during the wait), {} had a noted writer queued, "
                          "{} dirty, {} skipped",

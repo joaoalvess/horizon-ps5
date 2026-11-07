@@ -22,6 +22,7 @@ UpdateDescriptorQueue::UpdateDescriptorQueue(const Device& device_, size_t frame
     : device{device_},
 #ifdef PS5_NATIVE
       frame_payload_size{std::min<size_t>(frame_payload_size_, 0x10000)},
+      max_frame_payload_size{frame_payload_size_},
 #else
       frame_payload_size{frame_payload_size_},
 #endif
@@ -65,6 +66,20 @@ void UpdateDescriptorQueue::Acquire(Scheduler& scheduler, size_t required_entrie
                reserve, frame_payload_size);
     const size_t used = static_cast<size_t>(std::distance(payload_start, payload_cursor));
     if (used + reserve >= frame_payload_size) {
+#ifdef PS5_NATIVE
+        if (frame_payload_size < max_frame_payload_size) {
+            scheduler.WaitWorker();
+            frame_payload_size = std::min(frame_payload_size * 2, max_frame_payload_size);
+            payload.resize(frame_payload_size * FRAMES_IN_FLIGHT);
+            frame_index = 0;
+            payload_start = payload.data();
+            payload_cursor = payload_start;
+            upload_start = payload_cursor;
+            LOG_INFO(Render_Vulkan, "Descriptor payload grown to {} entries a frame (used={}, reserve={})",
+                     frame_payload_size, used, reserve);
+            return;
+        }
+#endif
         LOG_WARNING(Render_Vulkan, "Payload overflow (used={}, reserve={}, capacity={})",
                     used, reserve, frame_payload_size);
         scheduler.WaitWorker();
