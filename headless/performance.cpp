@@ -487,7 +487,13 @@ void ReportHeap(const char* why) {
     std::fprintf(stderr, "[EglantinePS5] heap: holds %zu MiB (%zu MiB of pieces, %zu MiB in %u large blocks), "
                          "%zu MiB of it in use; %zu MiB given back so far (%s)\n",
                  held >> 20, (held - large) >> 20, large >> 20, large_blocks, in_use >> 20, returned >> 20, why);
-    if (eden_heap_sites_report) eden_heap_sites_report();
+    static std::atomic<std::size_t> sites_reported_at{0};
+    const std::size_t reported_at = sites_reported_at.load(std::memory_order_relaxed);
+    const std::size_t change = held > reported_at ? held - reported_at : reported_at - held;
+    if (eden_heap_sites_report && change >= (std::size_t{32} << 20)) {
+        sites_reported_at.store(held, std::memory_order_relaxed);
+        eden_heap_sites_report();
+    }
 }
 
 std::size_t TrimHeap(const char* why) {

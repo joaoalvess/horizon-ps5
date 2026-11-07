@@ -582,10 +582,12 @@ inline void ReportGuestRun() {
     }
     std::sort(rows.begin(), rows.begin() + count,
               [](const Row& a, const Row& b) { return a.ns > b.ns; });
-    std::printf("EDEN_GUEST_RUN");
-    for (size_t i = 0; i < count && i < 12; ++i)
-        std::printf(" %u=%llu/%llu", rows[i].tid, rows[i].ns / 1000000ULL, rows[i].calls);
-    std::printf("\n");
+    if (count != 0) {
+        std::printf("EDEN_GUEST_RUN");
+        for (size_t i = 0; i < count && i < 12; ++i)
+            std::printf(" %u=%llu/%llu", rows[i].tid, rows[i].ns / 1000000ULL, rows[i].calls);
+        std::printf("\n");
+    }
     // Per guest core since the last report: idles, of them sleeps, average and worst wake-up
     // latency of the sleeps an interrupt ended (microseconds).
     static std::array<IdleCounters, 6> last_idle{};

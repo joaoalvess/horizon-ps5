@@ -2536,8 +2536,8 @@ list(APPEND common_sources "${PORT_BUILD_DIR}/multi_level_page_table.cpp")
         "    return (std::min)(size_t{128}, limit);")
     eden_patch(vfs_real_source
         "RealVfsFilesystem::RealVfsFilesystem() : VfsFilesystem(nullptr) {}"
-        "RealVfsFilesystem::RealVfsFilesystem() : VfsFilesystem(nullptr) {\n    std::fprintf(stderr, \"EDEN_VFS_CACHE max_open_files=%zu\\n\", MaxOpenFiles());\n}")
-    string(PREPEND vfs_real_source "#include <cstdio>\n")
+        "RealVfsFilesystem::RealVfsFilesystem() : VfsFilesystem(nullptr) {\n    static std::atomic<bool> reported{false};\n    if (!reported.exchange(true))\n        std::fprintf(stderr, \"EDEN_VFS_CACHE max_open_files=%zu\\n\", MaxOpenFiles());\n}")
+    string(PREPEND vfs_real_source "#include <atomic>\n#include <cstdio>\n")
     write_derived("${PORT_BUILD_DIR}/vfs_real.cpp" "${vfs_real_source}")
     list(REMOVE_ITEM core_sources file_sys/vfs/vfs_real.cpp)
     list(APPEND core_sources "${PORT_BUILD_DIR}/vfs_real.cpp")

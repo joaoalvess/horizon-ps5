@@ -135,25 +135,40 @@ void Frame(std::uint64_t frame, std::uint64_t ns) {
                 static_cast<unsigned long long>(mapped_checked_bytes.load()),
                 static_cast<unsigned long long>(mapped_failures.load()));
         }
-        if (frame % 120 == 0)
+        static std::array<std::uint64_t, 3> mapped_printed{};
+        const std::array<std::uint64_t, 3> mapped_now{
+            mapped_direct_bytes.load(), mapped_checked_bytes.load(), mapped_failures.load()};
+        if (frame % 120 == 0 && mapped_now != mapped_printed) {
+            mapped_printed = mapped_now;
             std::printf("MKW_MAPPED_STATS frame=%llu mode=%u direct=%llu checked=%llu failures=%llu\n",
                 static_cast<unsigned long long>(frame), mapped_mode.load(),
-                static_cast<unsigned long long>(mapped_direct_bytes.load()),
-                static_cast<unsigned long long>(mapped_checked_bytes.load()),
-                static_cast<unsigned long long>(mapped_failures.load()));
+                static_cast<unsigned long long>(mapped_now[0]),
+                static_cast<unsigned long long>(mapped_now[1]),
+                static_cast<unsigned long long>(mapped_now[2]));
+        }
 
-        if (frame % 120 == 0)
+        static std::array<std::uint64_t, 4> rejections_printed{};
+        const std::array<std::uint64_t, 4> rejections_now{mapped_rejections[0].load(),
+            mapped_rejections[1].load(), mapped_rejections[2].load(), mapped_rejections[3].load()};
+        if (frame % 120 == 0 && rejections_now != rejections_printed) {
+            rejections_printed = rejections_now;
             std::printf("MKW_MAPPED_REJECT frame=%llu unmapped=%llu opaque=%llu unknown=%llu pending=%llu\n",
                 static_cast<unsigned long long>(frame),
-                static_cast<unsigned long long>(mapped_rejections[0].load()),
-                static_cast<unsigned long long>(mapped_rejections[1].load()),
-                static_cast<unsigned long long>(mapped_rejections[2].load()),
-                static_cast<unsigned long long>(mapped_rejections[3].load()));
-        if (frame % 120 == 0)
+                static_cast<unsigned long long>(rejections_now[0]),
+                static_cast<unsigned long long>(rejections_now[1]),
+                static_cast<unsigned long long>(rejections_now[2]),
+                static_cast<unsigned long long>(rejections_now[3]));
+        }
+        static std::array<std::uint64_t, 2> mapping_printed{};
+        const std::array<std::uint64_t, 2> mapping_now{
+            mapping_operations[1].load(), mapping_operations[0].load()};
+        if (frame % 120 == 0 && mapping_now != mapping_printed) {
+            mapping_printed = mapping_now;
             std::printf("MKW_MAPPING_STATE frame=%llu enabled=%u ops=%llu old_ops=%llu\n",
                 static_cast<unsigned long long>(frame), unsigned(mapping_enabled.load()),
-                static_cast<unsigned long long>(mapping_operations[1].load()),
-                static_cast<unsigned long long>(mapping_operations[0].load()));
+                static_cast<unsigned long long>(mapping_now[0]),
+                static_cast<unsigned long long>(mapping_now[1]));
+        }
         const char* mapping_path = "/data/homebrew/PPSA98515/mkw-map-mode.txt";
         if (FILE* mode = std::fopen(mapping_path, "r")) {
             unsigned enabled{};
@@ -180,10 +195,13 @@ void Frame(std::uint64_t frame, std::uint64_t ns) {
             std::remove(mode_path);
         }
     }
-    if (frame % 30 == 0)
+    static std::uint64_t semaphore_hits_printed{};
+    if (frame % 30 == 0 && semaphore_hits.load() != semaphore_hits_printed) {
+        semaphore_hits_printed = semaphore_hits.load();
         std::printf("MKW_SEMAPHORE_STATE frame=%llu enabled=%u hits=%llu\n",
             static_cast<unsigned long long>(frame), unsigned(semaphore_enabled.load()),
-            static_cast<unsigned long long>(semaphore_hits.load()));
+            static_cast<unsigned long long>(semaphore_hits_printed));
+    }
     if (frame % 30 == 0 && semaphore_enabled.load()) {
         for (const auto& entry : semaphore_reasons) {
             const auto address = entry.address.load(std::memory_order_acquire);
