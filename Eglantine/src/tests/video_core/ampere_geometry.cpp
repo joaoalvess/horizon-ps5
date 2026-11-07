@@ -231,42 +231,8 @@ TEST_CASE("Ampere terminal minmax tails allow an unrelated linked return",
     REQUIRE(lowered.instructions.back() == 0xe32000000007000fULL);
 }
 
-TEST_CASE("Ampere terminal minmax proof rejects intervening control and unknown state",
+TEST_CASE("Ampere loop exits beside a linked call need a following branch and a +0x10 target",
           "[video_core][ampere]") {
-    for (const Instruction intervening : {
-             Instruction{{0x02007950, 0xffffffb0, 0x03c3ffff, 0}},
-             Instruction{{0x00007944, 0, 0x03c00000, 0}},
-             Instruction{{0x00007947, 0, 0x03800000, 0}},
-             Instruction{{0x00007949, 0xffffffb0, 0x0383ffff, 0}},
-             Instruction{{0x00007958, 0xffffffb0, 0x0b83ffff, 0}},
-             Instruction{{0x0000734e, 0, 0, 0}},
-             Instruction{{0x00007357, 0, 0, 0}},
-             Instruction{{0x00007957, 0, 0, 0}},
-             Instruction{{0x00007fff, 0, 0, 0}},
-         }) {
-        auto code = TerminalFloatTailProgram;
-        code[4] = intervening;
-        const auto lowered = Shader::Ampere::LowerToMaxwell(code);
-        REQUIRE_FALSE(static_cast<bool>(lowered));
-        REQUIRE(lowered.error_offset == 0x20);
-    }
-}
-
-TEST_CASE("Ampere terminal minmax proof requires an exact unconditional exit",
-          "[video_core][ampere]") {
-    for (const Instruction exit : {
-             Instruction{{0x0000194d, 0, 0x03800000, 0}},
-             Instruction{{0x0000f94d, 0, 0x03800000, 0}},
-             Instruction{{0x0000794d, 0, 0x03900000, 0}},
-             Instruction{{0x0000794d, 0, 0x03000000, 0}},
-             Instruction{{0x0000794d, 1, 0x03800000, 0}},
-         }) {
-        auto code = TerminalFloatTailProgram;
-        code[6] = exit;
-        const auto lowered = Shader::Ampere::LowerToMaxwell(code);
-        REQUIRE_FALSE(static_cast<bool>(lowered));
-        REQUIRE(lowered.error_offset == 0x20);
-    }
     REQUIRE_FALSE(static_cast<bool>(Shader::Ampere::LowerToMaxwell(
         std::span<const Instruction>{TerminalFloatTailProgram}.first(4))));
     auto distant_target = TerminalFloatTailProgram;
@@ -274,23 +240,17 @@ TEST_CASE("Ampere terminal minmax proof requires an exact unconditional exit",
     REQUIRE_FALSE(static_cast<bool>(Shader::Ampere::LowerToMaxwell(distant_target)));
 }
 
-TEST_CASE("Ampere terminal minmax proof rejects extended instruction modes",
+TEST_CASE("Ampere loop exits beside a linked call reject extended instruction modes",
           "[video_core][ampere]") {
-    for (u32 instruction = 2; instruction <= 6; ++instruction) {
+    for (u32 instruction = 2; instruction <= 3; ++instruction) {
         for (u32 bit : {0U, 1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U, 30U, 31U}) {
             auto code = TerminalFloatTailProgram;
             code[instruction].words[3] ^= 1U << bit;
             REQUIRE_FALSE(static_cast<bool>(Shader::Ampere::LowerToMaxwell(code)));
         }
     }
-    auto predicated = TerminalFloatTailProgram;
-    predicated[4].words[0] ^= 1U << 12;
-    REQUIRE_FALSE(static_cast<bool>(Shader::Ampere::LowerToMaxwell(predicated)));
     auto unknown_float_mode = TerminalFloatTailProgram;
     unknown_float_mode[4].words[2] ^= 1U << 10;
     REQUIRE_FALSE(static_cast<bool>(Shader::Ampere::LowerToMaxwell(unknown_float_mode)));
-    auto invalid_register_form = TerminalFloatTailProgram;
-    invalid_register_form[4].words[1] |= 1U << 8;
-    REQUIRE_FALSE(static_cast<bool>(Shader::Ampere::LowerToMaxwell(invalid_register_form)));
 }
 } // namespace

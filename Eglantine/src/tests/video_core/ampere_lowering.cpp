@@ -131,6 +131,32 @@ TEST_CASE("Ampere calls find a return address set ahead of them", "[video_core][
     REQUIRE(lowered.error == "native call linkage mode");
 }
 
+TEST_CASE("Ampere predicated NOINC loop exits lower beside a called function", "[video_core][ampere]") {
+    // @P4 CALL.REL.NOINC +0x10; BRA 0x0; MOV R9, 0x40; CALL.REL.NOINC; EXIT; RET.REL.NODEC R9
+    const std::array<Instruction, 6> code{{
+        {{0x00004944, 0x10, 0x03c00000, 0}},
+        {{0x00007947, 0xffffffe0, 0x0383ffff, 0}},
+        {{0x00097802, 0x40, 0x00000f00, 0}},
+        {{0x00007944, 0x10, 0x03c00000, 0}},
+        EXIT,
+        {{0x09007950, 0xffffffa0, 0x03c3ffff, 0}},
+    }};
+    REQUIRE(static_cast<bool>(LowerToMaxwell(code)));
+
+    // MOV R4, 0x20; @P3 CALL.REL.NOINC +0x10; BRA 0x10; MOV R5, 0x5; EXIT; RET.REL.NODEC R4
+    const std::array<Instruction, 6> linked{{
+        {{0x00047802, 0x20, 0x00000f00, 0}},
+        {{0x00003944, 0x10, 0x03c00000, 0}},
+        {{0x00007947, 0xffffffe0, 0x0383ffff, 0}},
+        {{0x00057802, 0x5, 0x00000f00, 0}},
+        EXIT,
+        {{0x04007950, 0xffffffa0, 0x03c3ffff, 0}},
+    }};
+    const auto lowered = LowerToMaxwell(linked);
+    REQUIRE(!static_cast<bool>(lowered));
+    REQUIRE(lowered.error == "native call linkage mode");
+}
+
 TEST_CASE("Ampere programs go on past an EXIT that a branch jumps over", "[video_core][ampere]") {
     // A call, then a branch over an EXIT to more of the program, with another call there.
     const std::array<Instruction, 8> code{{
