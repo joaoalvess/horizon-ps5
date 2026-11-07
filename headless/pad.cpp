@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "devices.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <numbers>
 #include <stdexcept>
@@ -14,6 +15,15 @@ namespace {
 // Signed-in users; unused entries are -1.
 struct LoginUserIdList {
     std::int32_t user_id[4];
+};
+constexpr std::array<const char*, 8> kAbsentEngines{
+    "keyboard", "mouse", "touch", "cemuhookudp", "tas", "camera", "virtual_amiibo", "joycon"};
+template <typename Device>
+class AbsentEngineFactory final : public Common::Input::Factory<Device> {
+public:
+    std::unique_ptr<Device> Create(const Common::ParamPackage&) override {
+        return std::make_unique<Device>();
+    }
 };
 }
 extern "C" int sceUserServiceGetForegroundUser(int* user);
@@ -121,11 +131,21 @@ Pad::Pad(float deadzone_, float threshold)
         std::make_shared<InputCommon::InputFactory>(engine));
     Common::Input::RegisterOutputFactory("virtual_gamepad",
         std::make_shared<InputCommon::OutputFactory>(engine));
+    for (const char* name : kAbsentEngines) {
+        Common::Input::RegisterInputFactory(name,
+            std::make_shared<AbsentEngineFactory<Common::Input::InputDevice>>());
+        Common::Input::RegisterOutputFactory(name,
+            std::make_shared<AbsentEngineFactory<Common::Input::OutputDevice>>());
+    }
 }
 Pad::~Pad() {
     Close();
     Common::Input::UnregisterInputFactory("virtual_gamepad");
     Common::Input::UnregisterOutputFactory("virtual_gamepad");
+    for (const char* name : kAbsentEngines) {
+        Common::Input::UnregisterInputFactory(name);
+        Common::Input::UnregisterOutputFactory(name);
+    }
 }
 bool Pad::Open() {
     if (slots[0].handle >= 0) return true;
