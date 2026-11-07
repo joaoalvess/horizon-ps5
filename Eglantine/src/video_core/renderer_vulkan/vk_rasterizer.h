@@ -7,6 +7,7 @@
 #pragma once
 
 #include <array>
+#include <chrono>
 
 #include <boost/container/static_vector.hpp>
 
@@ -128,6 +129,7 @@ public:
     void TiledCacheBarrier() override;
     void FlushCommands() override;
     void TickFrame() override;
+    void TickWithoutPresent() override;
     bool AccelerateConditionalRendering() override;
     bool HasDrawTransformFeedback() override;
     bool AccelerateSurfaceCopy(const Tegra::Engines::Fermi2D::Surface& src,
@@ -233,6 +235,8 @@ private:
     boost::container::static_vector<VkSampler, MAX_TEXTURES> sampler_handles;
 
     u32 draw_counter = 0;
+    std::chrono::steady_clock::time_point last_cache_tick = std::chrono::steady_clock::now();
+    u64 idle_tick_gpu{}; ///< GPU tick that must complete before the next idle cache tick
     bool mesh_draw{}; ///< the draw being prepared uses a task/mesh pipeline
 };
 

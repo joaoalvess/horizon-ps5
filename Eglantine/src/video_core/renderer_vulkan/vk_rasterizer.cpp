@@ -1638,7 +1638,45 @@ void RasterizerVulkan::FlushCommands() {
     scheduler.Flush();
 }
 
+void RasterizerVulkan::TickWithoutPresent() {
+    // The texture and buffer caches age, and collect garbage, by presented frames. A game can
+    // render for minutes without presenting (Mario Kart World loads ~7 GiB of textures first),
+    // so after 250 ms without a present they age by time, once the GPU has finished what was
+    // submitted (images retired by an age tick are destroyed a few ticks later). Never wait for
+    // it here: GPU work can wait on guest work that this thread has yet to process.
+    // EDEN_IDLE_CACHE_TICK=0 ages them by presents only, as before.
+    static const bool enabled = [] {
+        const char* value = std::getenv("EDEN_IDLE_CACHE_TICK");
+        return value == nullptr || value[0] != '0';
+    }();
+    if (!enabled) {
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last_cache_tick < std::chrono::milliseconds{250}) {
+        return;
+    }
+    if (idle_tick_gpu == 0) {
+        scheduler.Flush();
+        idle_tick_gpu = scheduler.CurrentTick() - 1;
+    }
+    if (!scheduler.IsFree(idle_tick_gpu)) {
+        return;
+    }
+    idle_tick_gpu = 0;
+    last_cache_tick = now;
+    {
+        std::scoped_lock lock{texture_cache.mutex};
+        texture_cache.TickFrame();
+    }
+    {
+        std::scoped_lock lock{buffer_cache.mutex};
+        buffer_cache.TickFrame();
+    }
+}
+
 void RasterizerVulkan::TickFrame() {
+    last_cache_tick = std::chrono::steady_clock::now();
     draw_counter = 0;
     guest_descriptor_queue.TickFrame();
     compute_pass_descriptor_queue.TickFrame();

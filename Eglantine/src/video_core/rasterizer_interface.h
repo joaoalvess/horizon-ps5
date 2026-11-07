@@ -179,6 +179,9 @@ public:
     /// Notify rasterizer that a frame is about to finish
     virtual void TickFrame() = 0;
 
+    /// End of a command list: lets caches age while the game renders without presenting.
+    virtual void TickWithoutPresent() {}
+
     virtual bool AccelerateConditionalRendering() {
         return false;
     }

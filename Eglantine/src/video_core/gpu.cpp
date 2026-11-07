@@ -147,6 +147,7 @@ struct GPU::Impl {
     /// Signal the ending of command list.
     void OnCommandListEnd() {
         renderer->ReadRasterizer()->ReleaseFences(false);
+        renderer->ReadRasterizer()->TickWithoutPresent();
         Settings::UpdateGPUAccuracy();
     }
 
