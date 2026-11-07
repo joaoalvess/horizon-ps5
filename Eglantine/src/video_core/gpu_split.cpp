@@ -22,6 +22,7 @@
 #include "common/thread.h"
 #include "core/core.h"
 #include "video_core/engines/engine_interface.h"
+#include "video_core/engines/maxwell_3d.h"
 #include "video_core/gpu_split.h"
 #include "video_core/nx2.h"
 #include "video_core/nx2_profile.h"
@@ -87,6 +88,11 @@ void GpuSplit::CheckOwner(const char* where) {
 GpuSplit GpuSplit::instance;
 
 void GpuSplit::MaybeStart(Core::System& system_) {
+    static const bool blocks = [] {
+        const char* value = std::getenv("EDEN_NX2_REG_BLOCKS");
+        return value == nullptr || value[0] != '0';
+    }();
+    reg_blocks = blocks;
     static const char mode = [] {
         const char* value = std::getenv("EDEN_NX2_SPLIT");
         return value != nullptr ? value[0] : '2';
@@ -141,6 +147,8 @@ void GpuSplit::Stop() {
     // wrap at a time and never reached the old write position (the next game's first GPU work
     // never ran, it waited on its syncpoint forever), and the engines it held were freed.
     ring.reset();
+    regs_entry = nullptr;
+    regs_count = 0;
     write_position = 0;
     published_local = 0;
     consumed_cache = 0;
@@ -201,6 +209,7 @@ void GpuSplit::WaitForSpace(size_t words) {
 }
 
 void GpuSplit::Publish() {
+    CloseRegs();
     if (published_local == write_position) {
         return;
     }
@@ -314,6 +323,7 @@ bool GpuSplit::WritePending(u64 key) {
 
 void GpuSplit::Drain() {
     sync_pending = false;
+    CloseRegs();
     consumed_cache = consumed.load(std::memory_order_acquire);
     if (consumed_cache == write_position) {
         return;
@@ -468,6 +478,24 @@ size_t GpuSplit::Execute(const u64* entry) {
         engine->CallMultiMethod(*system, method, reinterpret_cast<const u32*>(entry + data),
                                 amount, static_cast<u32>(entry[1]));
         return data + (amount + 1) / 2;
+    }
+    case Kind::Regs: {
+        const u32 count = static_cast<u32>((head >> 8) & 0xff);
+        auto* const engine = back_engine;
+        Nx2Profile::Scope method_scope{Nx2Profile::Zone::Method};
+        for (u32 i = 0; i < count; ++i) {
+            engine->method_sink.emplace_back(static_cast<u32>(entry[1 + i]), static_cast<u32>(entry[1 + i] >> 32));
+        }
+        engine->ConsumeSink(*system);
+        return 1 + count;
+    }
+    case Kind::CbData: {
+        const u32 count = static_cast<u32>((head >> 8) & 0xff);
+        auto* const engine = back_engine;
+        Nx2Profile::Scope method_scope{Nx2Profile::Zone::Method};
+        engine->ConsumeSink(*system);
+        static_cast<Tegra::Engines::Maxwell3D*>(engine)->ProcessCBDataBlock(entry + 1, count);
+        return 1 + count;
     }
     case Kind::Call: {
         const size_t payload = static_cast<size_t>((head >> 8) & 0xffffff);

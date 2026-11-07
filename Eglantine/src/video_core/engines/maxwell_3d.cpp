@@ -802,6 +802,18 @@ void Maxwell3D::ProcessCBData(u32 value) {
     ProcessCBMultiData(&value, 1);
 }
 
+void Maxwell3D::ProcessCBDataBlock(const u64* words, u32 count) {
+    std::array<u32, 64> data;
+    ASSERT(count <= data.size());
+    for (u32 i = 0; i < count; ++i) {
+        const u32 method = static_cast<u32>(words[i]);
+        const u32 value = ProcessShadowRam(method, static_cast<u32>(words[i] >> 32));
+        ProcessDirtyRegisters(method, value);
+        data[i] = value;
+    }
+    ProcessCBMultiData(data.data(), count);
+}
+
 void Maxwell3D::ProcessInlineIndexMultiData(u32 method, const u32* start_base, u32 amount) {
     if (amount == 0) {
         return;
@@ -1022,7 +1034,12 @@ void Maxwell3D::FrontWrite(VideoCommon::GpuSplit& split, FrontState& fs, u32 met
             break;
         }
     }
-    if (from_macro) {
+    constexpr u32 cb_data_first = MAXWELL3D_REG_INDEX(const_buffer.buffer);
+    if (!execution_mask[method] && split.RegBlocks()) {
+        split.PlainWrite(this, method, argument);
+    } else if (method >= cb_data_first && method < cb_data_first + 16 && split.RegBlocks()) {
+        split.CbDataWrite(this, method, argument);
+    } else if (from_macro) {
         split.MacroWrite(this, method, argument);
     } else {
         split.Method(this, method, argument, is_last_call, nullptr);

@@ -3264,6 +3264,9 @@ public:
 
     /// Handles a write to the CB_DATA[i] register.
     void ProcessCBData(u32 value);
+    /// A run of CB_DATA writes from the split GPU thread's front (GpuSplit::CbDataWrite): words
+    /// hold method (low 32 bits) and argument (high 32); as CallMethod for each, one memory write.
+    void ProcessCBDataBlock(const u64* words, u32 count);
     void ProcessCBMultiData(const u32* start_base, u32 amount);
 
     void ProcessInlineIndexMultiData(u32 method, const u32* start_base, u32 amount);

@@ -79,6 +79,22 @@ public:
     }
     void MultiMethod(Tegra::Engines::EngineInterface* engine, u32 method, const u32* words,
                      u32 amount, u32 methods_pending, const GPUVAddr* segment);
+    /// Whether plain register writes travel in blocks (PlainWrite); EDEN_NX2_REG_BLOCKS=0 turns it off.
+    [[nodiscard]] bool RegBlocks() const {
+        return reg_blocks;
+    }
+    /// A state register write with no side effect (not in the engine's execution_mask): gathered
+    /// with the ones around it into one Regs entry, which the back applies through the engine's
+    /// method sink (ProcessShadowRam, same-value skip, dirty flags) before anything sent after it.
+    void PlainWrite(Tegra::Engines::EngineInterface* engine, u32 method, u32 argument) {
+        BlockWrite(Kind::Regs, engine, method, argument);
+    }
+    /// A 3D constant-buffer data write (CB_DATA): gathered with the ones next to it into one
+    /// CbData entry, which the back runs as that many writes of the register (shadow RAM, dirty
+    /// flags) and one guest-memory write (Maxwell3D::ProcessCBDataBlock).
+    void CbDataWrite(Tegra::Engines::EngineInterface* engine, u32 method, u32 argument) {
+        BlockWrite(Kind::CbData, engine, method, argument);
+    }
     /// A write made by a macro: CallMethod without the method sink, as the engines' macros do.
     void MacroWrite(Tegra::Engines::EngineInterface* engine, u32 method, u32 argument) {
         SelectEngine(engine);
@@ -198,6 +214,8 @@ private:
         Method, ///< Bits 8-23 method, 32-63 argument; flags IsLast, HasSegment (word 1)
         Multi,  ///< Bits 8-23 method, 32-63 amount; word 1 methods pending, [segment], words
         Call,   ///< Bits 8-31 payload size in words; word 1 thunk, then the payload
+        Regs,   ///< Bits 8-15 count; then per word method (low 32 bits) and argument (high 32)
+        CbData, ///< As Regs, all constant-buffer data writes of the 3D engine
     };
     static constexpr u64 IsLast = 1 << 4;
     static constexpr u64 HasSegment = 1 << 5;
@@ -213,8 +231,37 @@ private:
         (*reinterpret_cast<const Func*>(payload))();
     }
 
+    static constexpr u32 MaxRegs = 64;
+    void BlockWrite(Kind kind, Tegra::Engines::EngineInterface* engine, u32 method, u32 argument) {
+        SelectEngine(engine);
+        if (regs_entry != nullptr && regs_kind != kind) {
+            CloseRegs();
+        }
+        if (regs_entry == nullptr) {
+            regs_entry = Reserve(1 + MaxRegs);
+            regs_kind = kind;
+        }
+        regs_entry[1 + regs_count] = (u64{argument} << 32) | method;
+        if (++regs_count == MaxRegs) {
+            CloseRegs();
+        }
+    }
+    /// Commits the open Regs entry: before any other entry, a publish and a drain.
+    void CloseRegs() {
+        if (regs_entry == nullptr) {
+            return;
+        }
+        regs_entry[0] = static_cast<u64>(regs_kind) | (u64{regs_count} << 8);
+        regs_entry = nullptr;
+        const u32 count = regs_count;
+        regs_count = 0;
+        Commit(1 + count);
+    }
     /// Room for an entry of `words` at the write position (never across the ring's end).
     u64* Reserve(size_t words) {
+        if (regs_entry != nullptr) [[unlikely]] {
+            CloseRegs();
+        }
         const size_t index = write_position & RingMask;
         if (index + words <= RingWords && write_position + words - consumed_cache <= RingWords)
             [[likely]] {
@@ -244,6 +291,7 @@ private:
     bool active{};
     bool front_macros{};
     bool tracks_releases{};
+    bool reg_blocks{};
     std::unique_ptr<u64[]> ring;
 
     // Front side.
@@ -256,6 +304,10 @@ private:
     Tegra::Engines::EngineInterface* front_engine{};
     /// Semaphore releases sent to the back: address, write position after them.
     std::unordered_map<GPUVAddr, u64> sent_releases;
+    /// The open Regs entry (reserved, not committed) and the writes in it.
+    u64* regs_entry{};
+    u32 regs_count{};
+    Kind regs_kind{Kind::Regs};
     struct FrontRelease {
         u32 value;
         u64 position; ///< write_position after the release: run once consumed reaches it
