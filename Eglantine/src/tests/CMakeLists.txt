@@ -9,6 +9,7 @@ add_executable(tests
     core/nx2_video_ready.cpp
     core/nx2_present_pacer.cpp
     video_core/framebuffer_clear_layers.cpp
+    video_core/framebuffer_limits.cpp
     video_core/pending_maps.cpp
     video_core/spirv_min_max_denorms.cpp
     common/bit_field.cpp
