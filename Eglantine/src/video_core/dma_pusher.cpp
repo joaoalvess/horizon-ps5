@@ -402,6 +402,17 @@ bool DmaPusher::Step() {
 
     auto& current_command = command_list.command_lists[dma_pushbuffer_subindex];
     const CommandListHeader& header = current_command;
+    // A new channel's first command lists can be filled by GPU work queued on another channel
+    // (the guest waits for it on events signalled at once here). With the GPU thread split, the
+    // front read them before the back had run that work: Bananza's second channel decoded its
+    // first entry from stale words ("method 0x1, count 1048"), ran garbage methods, and crashed on
+    // an out-of-range syncpoint or hung loading. Its first entries wait for the last queued writer.
+    if (unsynced_first_entries != 0) {
+        --unsynced_first_entries;
+        if (auto& split = VideoCommon::GpuSplit::Get(); split.Active()) {
+            split.DrainToLastWriter();
+        }
+    }
     RecordCapture("entry-begin");
     dma_state.dma_get = header.addr;
 
