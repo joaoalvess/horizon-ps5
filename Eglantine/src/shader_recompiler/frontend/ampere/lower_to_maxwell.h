@@ -3412,6 +3412,65 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
                 emit(base(0x5c10000000000000ULL) | (u64{250} << 8) | (u64{251} << 20));
                 break;
             }
+            // UIADD3.X with UPn carry-ins (upstream Eglantine #87).
+            if (rewritten_uniform && opcode == 0x210 && insn.Bits(74, 1) &&
+                insn.Bits(81, 6) == 0x3f) {
+                if (guarded_uniform || (insn.words[2] & ~0x0781e0ffU) != 0x007e0400U ||
+                    (insn.words[1] & ~0xffU))
+                    return fail(index, "native uniform extended add mode");
+                emit(0x5c10000000000000ULL | predicate | 250 | (u64{insn.Bits(24, 8)} << 8) |
+                     (u64{insn.Bits(32, 8)} << 20));
+                emit(0x5c10000000000000ULL | predicate | 250 | (u64{250} << 8) |
+                     (u64{insn.Bits(64, 8)} << 20));
+                u32 mask = 0;
+                for (u32 bit : {77U, 87U}) {
+                    const u32 source = insn.Bits(bit, 3);
+                    if (source != 7) mask |= 1U << (6 - source);
+                }
+                save_predicate(mask);
+                emit(0x38f0000000070000ULL | (u64{239} << 8) | (u64{mask} << 20));
+                mov_imm(252, 1);
+                for (u32 bit : {77U, 87U}) {
+                    const u32 source = insn.Bits(bit, 3);
+                    emit(0x5ca0000000000000ULL | predicate | 251 | (u64{252} << 8) |
+                         (u64{255} << 20) | (u64{source == 7 ? 7U : 6 - source} << 39) |
+                         (u64{insn.Bits(bit + 3, 1)} << 42));
+                    emit(0x5c10000000000000ULL | predicate | 250 | (u64{250} << 8) |
+                         (u64{251} << 20));
+                }
+                restore_predicate(mask);
+                emit(base(0x5c98000000000000ULL) | (u64{15} << 39) | (u64{250} << 20));
+                break;
+            }
+            // UIADD3 with UPn carry outputs (Ocarina's movie/AA compute; upstream Eglantine #87).
+            if (rewritten_uniform && opcode == 0x210 && insn.Bits(81, 6) != 0x3f) {
+                const u32 first = insn.Bits(81, 3), second = insn.Bits(84, 3);
+                if (guarded_uniform || (insn.words[2] & ~0x007e00ffU) != 0x0781e000U ||
+                    (insn.words[1] & ~0xffU) || (first != 7 && first == second))
+                    return fail(index, "native uniform add carry mode");
+                emit(0x5c10000000000000ULL | predicate | 250 | (u64{insn.Bits(24, 8)} << 8) |
+                     (u64{insn.Bits(32, 8)} << 20) | (u64{1} << 47));
+                emit(0x5c10000000000000ULL | predicate | 251 | (u64{255} << 8) |
+                     (u64{255} << 20) | (u64{1} << 43));
+                emit(0x5c10000000000000ULL | predicate | 250 | (u64{250} << 8) |
+                     (u64{insn.Bits(64, 8)} << 20) | (u64{1} << 47));
+                emit(0x5c10000000000000ULL | predicate | 251 | (u64{251} << 8) |
+                     (u64{255} << 20) | (u64{1} << 43));
+                const u32 mask = (first == 7 ? 0U : 1U << (6 - first)) |
+                                 (second == 7 ? 0U : 1U << (6 - second));
+                save_predicate(mask);
+                emit(base(0x5c98000000000000ULL) | (u64{15} << 39) | (u64{250} << 20));
+                for (u32 output = 0; output < 2; ++output) {
+                    const u32 target = output ? second : first;
+                    if (target == 7) continue;
+                    mov_imm(252, output + 1);
+                    emit(0x5b60000000000000ULL | predicate | 7 | (u64{6 - target} << 3) |
+                         (u64{251} << 8) | (u64{252} << 20) | (u64{7} << 39) | (u64{6} << 49));
+                }
+                emit(0x38e8000000070000ULL | 239 | (u64{239} << 8) | (u64{mask} << 20));
+                restore_predicate(mask);
+                break;
+            }
             if (!(insn.words[1] & ~(opcode == 0x210 ? 0xffU | 0x80000000U : 0xffffffffU)) &&
                 !insn.Bits(72, 2) &&
                 insn.Bits(81, 3) != 7 && !insn.Bits(74, 1) && insn.Bits(77, 4) == 15 &&
