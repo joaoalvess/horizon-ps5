@@ -68,9 +68,9 @@ public:
 
     void FlushRegion(VAddr addr, std::size_t size) {
         bool result = false;
+        // Visits every query in the range: each final value not written yet is written here.
         IterateCache<false>(addr, size, [this, &result](QueryLocation location) {
             result |= SemiFlushQueryDirty(location);
-            return result;
         });
         if (result) {
             RequestGuestHostSync();

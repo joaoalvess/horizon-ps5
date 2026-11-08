@@ -56,6 +56,7 @@ add_executable(tests
     video_core/nx2_command_ranges.cpp
     video_core/nx2_read_wait.cpp
     video_core/physical_alias.cpp
+    video_core/invalidation_accumulator.cpp
     video_core/ampere_lowering.cpp
     video_core/ampere_register_shadowing.cpp
     video_core/ampere_returns.cpp
