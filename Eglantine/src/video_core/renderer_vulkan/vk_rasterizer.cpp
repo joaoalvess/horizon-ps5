@@ -880,6 +880,9 @@ void RasterizerVulkan::DrawTexture() {
                                     .y = ScaleSrc(draw_texture_state.src_y1)}};
     Extent3D src_size = {static_cast<u32>(ScaleSrc(texture.size.width)),
                          static_cast<u32>(ScaleSrc(texture.size.height)), texture.size.depth};
+    if (texture.RenderTarget() == VK_NULL_HANDLE) {
+        return; // nothing to sample from
+    }
     blit_image.BlitColor(framebuffer, texture.RenderTarget(), texture.ImageHandle(),
                          sampler->Handle(), dst_region, src_region, src_size);
 }
