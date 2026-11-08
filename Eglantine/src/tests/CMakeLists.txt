@@ -14,6 +14,7 @@ add_executable(tests
     video_core/spirv_min_max_denorms.cpp
     video_core/virtual_range_cache.cpp
     common/bit_field.cpp
+    common/bit_util.cpp
     common/cityhash.cpp
     common/container_hash.cpp
     common/fibers.cpp
