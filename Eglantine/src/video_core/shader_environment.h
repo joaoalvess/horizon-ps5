@@ -43,6 +43,10 @@ struct LoweredNativeCode {
     u32 texture_bound = ~0U;
     /// Constant buffer for surface descriptors, when the program needs another than texture_bound.
     u32 surface_bound = ~0U;
+    /// FNV-1a of the native instructions (Shader::Ampere::NativeProgramKey): names a game's program.
+    u64 native_program_key{};
+    /// The program has tensor (HMMA) instructions.
+    bool uses_hmma{};
 };
 
 class GenericEnvironment : public Shader::Environment {

@@ -26,6 +26,8 @@
 #include "video_core/host1x/gpu_device_memory_manager.h"
 #include "video_core/memory_manager.h"
 #include "video_core/shader_cache.h"
+#include "video_core/oot_network.h"
+#include "common/settings.h"
 #include "video_core/shader_environment.h"
 #include "video_core/texture_cache/util.h"
 
@@ -182,18 +184,33 @@ const ShaderInfo* ShaderCache::ComputeShader() {
         LOG_ERROR(HW_GPU, "Invalid GPU address for shader {:#016x}", shader_addr);
         return nullptr;
     }
-    if (const ShaderInfo* const shader = TryGet(*cpu_shader_addr)) {
+    const auto bypass = [&](const ShaderInfo* shader) {
+        // Ocarina of Time's anti-aliasing network (oot_network.h): skipped, or its output pass
+        // replaced by a copy of the tonemapped image.
+        if (shader && shader->lowered_native && kepler_compute->InNativeDispatch()) {
+            const u64 program_id = Settings::GetCurrentProgramID();
+            if (VideoCommon::OotNetwork::BypassEnabled(program_id) &&
+                kepler_compute->BypassOotNetwork(program_id, shader->lowered_native->native_program_key,
+                                                 shader->lowered_native->uses_hmma)) {
+                throw VideoCommon::OotNetwork::DispatchReplaced{};
+            }
+        }
         return shader;
+    };
+    if (const ShaderInfo* const shader = TryGet(*cpu_shader_addr)) {
+        return bypass(shader);
     }
+    const ShaderInfo* made{};
     try {
         RethrowIfRejected(*cpu_shader_addr);
         ComputeEnvironment env{*kepler_compute, *gpu_memory, program_base, qmd.program_start,
                                {}, support_cooperative_matrix};
-        return MakeShaderInfo(env, *cpu_shader_addr);
+        made = MakeShaderInfo(env, *cpu_shader_addr);
     } catch (const Shader::Exception&) {
         RememberRejection(*cpu_shader_addr);
         throw;
     }
+    return bypass(made);
 }
 
 void ShaderCache::RethrowIfRejected(VAddr addr) {

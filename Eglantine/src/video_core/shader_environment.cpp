@@ -682,6 +682,9 @@ std::shared_ptr<const LoweredNativeCode> GenericEnvironment::LowerNativeCode(u32
             words[1], words[2], words[3]);
     }
     auto result = std::make_shared<LoweredNativeCode>();
+    result->native_program_key = Shader::Ampere::NativeProgramKey(native);
+    result->uses_hmma = std::any_of(native.begin(), native.end(),
+                                    [](const auto& instruction) { return (instruction.words[0] & 0xfff) == 0x23c; });
     result->texture_bound = lowered.required_texture_buffer;
     result->surface_bound = lowered.required_surface_buffer;
     result->source_size = native_header_size + lowered.source_size;
