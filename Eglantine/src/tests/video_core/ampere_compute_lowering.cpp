@@ -113,4 +113,26 @@ TEST_CASE("Ampere guarded USHF.R.U32.HI lowers to a guarded SHR", "[video_core][
     const auto& out = lowered.instructions;
     REQUIRE(std::find(out.begin(), out.end(), guarded_shift) != out.end());
 }
+
+TEST_CASE("Ampere IADD3 with an immediate and a third source keeps the immediate's sign",
+          "[video_core][ampere]") {
+    // IADD3 R43, R35, -0x7e, -R36 from Pokemon Pokopia's compute shader 4f4f5f3b9e7bb44e
+    // (op 810 232b8810 ffffff82 07ffe824 000fe400). Bit 63 is the immediate's sign bit; it was
+    // read as a negation of b, giving R35 + 0x7e - R36.
+    const Instruction add{{0x232b8810, 0xffffff82, 0x07ffe824, 0x000fe400}};
+    const auto lowered = LowerToMaxwell(std::array{add, Exit});
+    INFO(lowered.error);
+    REQUIRE(static_cast<bool>(lowered));
+    // MOV32I R251, -0x7e; IADD R250, R35, R251; IADD R43, R250, -R36.
+    REQUIRE(lowered.instructions.size() == 4);
+    REQUIRE(lowered.instructions[0] == 0x010ffffff828f0fbULL);
+    REQUIRE(lowered.instructions[1] == 0x5c1000000fb823faULL);
+    REQUIRE(lowered.instructions[2] == 0x5c1100000248fa2bULL);
+    // A register b (0x210) still takes bit 63 as its negation.
+    const Instruction negated{{0x232b7210, 0x80000022, 0x07ffe824, 0x000fe400}};
+    const auto register_form = LowerToMaxwell(std::array{negated, Exit});
+    INFO(register_form.error);
+    REQUIRE(static_cast<bool>(register_form));
+    REQUIRE((register_form.instructions[0] >> 48) == 0x5c11);
+}
 } // namespace
