@@ -140,6 +140,25 @@ inline void Nx2ClearGpuWrittenPages() {
     return (g_nx2_gpu_written_pages[page / 64].load(std::memory_order_relaxed) >> (page % 64)) & 1;
 }
 
+/// False only when no page of [device_address, device_address + size) has been written by the
+/// buffer cache on the GPU. Ranges past the bitmap answer true.
+[[nodiscard]] inline bool Nx2MayBeGpuWritten(u64 device_address, u64 size) {
+    if (size == 0) {
+        return false;
+    }
+    const u64 first = device_address >> Nx2WrittenPageBits;
+    const u64 last = (device_address + size - 1) >> Nx2WrittenPageBits;
+    if (last < first || last >= g_nx2_gpu_written_pages.size() * 64) {
+        return true;
+    }
+    for (u64 page = first; page <= last; ++page) {
+        if ((g_nx2_gpu_written_pages[page / 64].load(std::memory_order_relaxed) >> (page % 64)) & 1) {
+            return true;
+        }
+    }
+    return false;
+}
+
 class Nx2PageBits {
 public:
     void Set(u64 device_address, u64 size) {
