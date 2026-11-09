@@ -80,6 +80,16 @@ public:
         return state.renderpass != VK_NULL_HANDLE;
     }
 
+    /// Changes whenever a render pass begins or ends (fast draw).
+    u64 RenderPassSerial() const {
+        return render_pass_serial;
+    }
+
+    /// The graphics pipeline bound in the current command buffer, if the scheduler knows it.
+    const GraphicsPipeline* BoundGraphicsPipeline() const {
+        return state.graphics_pipeline;
+    }
+
     /// Update the pipeline to the current execution context.
     bool UpdateGraphicsPipeline(GraphicsPipeline* pipeline);
 
@@ -354,6 +364,7 @@ private:
 
     State state;
     u64 recording_epoch = 0;
+    u64 render_pass_serial{}; ///< RenderPassSerial
 
     u32 num_renderpass_images = 0;
     std::array<VkImage, 9> renderpass_images{};

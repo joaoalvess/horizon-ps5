@@ -19,6 +19,7 @@
 #include "video_core/gpu.h"
 #include "video_core/gpu_thread.h"
 #include "video_core/gpu_split.h"
+#include "video_core/nx2_fast_draw.h"
 #include "video_core/nx2_profile.h"
 #include "video_core/readback_diagnostics.h"
 #include "video_core/host1x/host1x.h"
@@ -159,11 +160,14 @@ void ThreadManager::StartThread(VideoCore::RendererBase& renderer, Core::Fronten
                     split.Defer([gpu = &system.GPU()] { gpu->InvalidateGPUCache(); });
                     scheduler.Push(system.GPU(), submit_list->channel, std::move(submit_list->entries));
                 } else if (std::holds_alternative<GPUTickCommand>(next.data)) {
-                    split.Defer([gpu = &system.GPU()] { gpu->TickWork(); });
+                    // TickWork ends the fast draw delta chain itself when it runs a request.
+                    split.Defer([gpu = &system.GPU()] { gpu->TickWork(); },
+                                VideoCommon::GpuSplit::FastDrawNeutral);
                 } else if (auto* run = std::get_if<RunCommand>(&next.data)) {
                     if (run->before_later_reads) {
                         split.Drain();
                         run->func();
+                        VideoCommon::Nx2FastDraw::Break(VideoCommon::Nx2FastDraw::Reason::Call);
                     } else {
                         split.DeferFunction(std::move(run->func));
                     }
@@ -187,7 +191,7 @@ void ThreadManager::StartThread(VideoCore::RendererBase& renderer, Core::Fronten
                 }
                 split.DeferFunction([state_ptr = &state, fence = next.fence, completion = next.completion] {
                     SignalCommand(*state_ptr, fence, completion);
-                });
+                }, VideoCommon::GpuSplit::FastDrawNeutral);
                 split.Publish();
                 continue;
             }

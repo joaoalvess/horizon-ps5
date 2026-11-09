@@ -8,6 +8,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstring>
 #include <numeric>
 #include <cstdlib>
 #include <limits>
@@ -36,6 +37,7 @@
 #include "video_core/texture_cache/texture_cache_base.h"
 #include "video_core/texture_cache/util.h"
 #include "video_core/nx2.h"
+#include "video_core/nx2_fast_draw.h"
 #include "video_core/nx2_profile.h"
 #include "video_core/texture_barrier_epoch.h"
 #include "video_core/cache_tracking_diagnostics.h"
@@ -632,6 +634,7 @@ void TextureCache<P>::ReplaceColorFeedbackViews(std::span<ImageViewInOut> views)
     // Every replacement remains live until this draw executes. Reusing a same-shaped shadow
     // within this call would overwrite an earlier binding's snapshot before it is sampled.
     boost::container::small_vector<ImageId, 8> used_shadows;
+    color_feedback_views_replaced = false;
     for (ImageViewInOut& view : views) {
         if (view.id == NULL_IMAGE_VIEW_ID || view.blacklist) {
             continue;
@@ -681,7 +684,151 @@ void TextureCache<P>::ReplaceColorFeedbackViews(std::span<ImageViewInOut> views)
         const ImageViewInfo view_info =
             image.image_view_infos[std::distance(image.image_view_ids.begin(), view_it)];
         view.id = FindOrEmplaceImageView(shadow_id, view_info);
+        color_feedback_views_replaced = true;
     }
+}
+
+template <class P>
+bool TextureCache<P>::ResolveMemoizedTextures(SampledTextureMemo& memo,
+                                              std::span<const GPUVAddr> handle_addresses,
+                                              std::span<ImageViewInOut> views,
+                                              std::span<SamplerId> samplers) {
+    const auto& image_table = channel_state->graphics_image_table;
+    const auto& sampler_table = channel_state->graphics_sampler_table;
+    const bool via_header_index =
+        maxwell3d->regs.sampler_binding == Tegra::Engines::Maxwell3D::Regs::SamplerBinding::ViaHeaderBinding;
+    if (!memo.valid || memo.memory != gpu_memory || memo.image_table != &image_table ||
+        memo.image_changes != image_table.changes ||
+        memo.sampler_changes != sampler_table.changes ||
+        memo.via_header_index != via_header_index ||
+        memo.entries.size() != handle_addresses.size() || views.size() != handle_addresses.size() ||
+        samplers.size() != handle_addresses.size() ||
+        memo.host_serial != gpu_memory->HostPointerSerial()) {
+        return false;
+    }
+    // The bytes the ids came from are what they were: the handle words, then the texture and
+    // sampler descriptors they select. Nothing else decides the views and samplers.
+    for (size_t i = 0; i < handle_addresses.size(); ++i) {
+        const SampledTextureMemo::Entry& entry = memo.entries[i];
+        if (entry.handle_address != handle_addresses[i] ||
+            std::memcmp(entry.handle_host, &entry.raw, sizeof(entry.raw)) != 0 ||
+            std::memcmp(entry.tic_host, &entry.tic, sizeof(entry.tic)) != 0 ||
+            std::memcmp(entry.tsc_host, &entry.tsc, sizeof(entry.tsc)) != 0) {
+            return false;
+        }
+    }
+    // FillImageViews replaces a written unwritten-sparse image (deletes it and visits again):
+    // leave that to the full path.
+    const auto needs_replacing = [&](ImageViewId id) {
+        if (!PreparesImage(slot_image_views, id)) {
+            return false;
+        }
+        const ImageBase& image = slot_images[slot_image_views[id].image_id];
+        return True(image.flags & ImageFlagBits::UnwrittenSparse) &&
+               True(image.flags & ImageFlagBits::Remapped);
+    };
+    if (std::ranges::any_of(memo.entries, [&](const auto& entry) { return needs_replacing(entry.view); })) {
+        return false;
+    }
+    // As FillImageViews: sampling for a draw (SynchronizeAliases' feedback copies).
+    feedback_sampling = true;
+    SCOPE_EXIT {
+        feedback_sampling = false;
+    };
+    has_deleted_images = false;
+    for (size_t i = 0; i < handle_addresses.size(); ++i) {
+        const SampledTextureMemo::Entry& entry = memo.entries[i];
+        views[i] = ImageViewInOut{.index = entry.view_index, .blacklist = false, .id = entry.view};
+        samplers[i] = entry.sampler;
+        // As VisitImageView: never the null view (PrepareImageView's gate, Lichii #910/#921).
+        PrepareImageView(entry.view, false, false);
+    }
+    if (has_deleted_images || (prepare_log == nullptr &&
+                               std::ranges::any_of(memo.entries, [&](const auto& entry) {
+                                   return needs_replacing(entry.view);
+                               }))) {
+        // Preparing an image deleted or replaced others: the full path resolves the views again.
+        memo.valid = false;
+        return false;
+    }
+    return true;
+}
+
+template <class P>
+void TextureCache<P>::MemoizeTextures(SampledTextureMemo& memo,
+                                      std::span<const TextureHandleRead> reads,
+                                      std::span<const ImageViewInOut> views,
+                                      std::span<const SamplerId> samplers) {
+    memo.valid = false;
+    memo.entries.clear();
+    auto& image_table = channel_state->graphics_image_table;
+    auto& sampler_table = channel_state->graphics_sampler_table;
+    if (image_table.invalidated || sampler_table.invalidated || reads.size() != views.size() ||
+        reads.size() != samplers.size()) {
+        return;
+    }
+    const bool via_header_index =
+        maxwell3d->regs.sampler_binding == Tegra::Engines::Maxwell3D::Regs::SamplerBinding::ViaHeaderBinding;
+    // Each word is read through one host pointer: only within a page.
+    const auto host_of = [&](GPUVAddr address, size_t size) -> const u8* {
+        if ((address & Core::DEVICE_PAGEMASK) + size > Core::DEVICE_PAGESIZE) {
+            return nullptr;
+        }
+        return gpu_memory->GetPointer(address);
+    };
+    memo.entries.reserve(reads.size());
+    for (size_t i = 0; i < reads.size(); ++i) {
+        const TextureHandleRead& read = reads[i];
+        if (!views[i].id || !samplers[i] || views[i].index != read.view_index ||
+            read.view_index > image_table.current_limit ||
+            read.sampler_index > sampler_table.current_limit) {
+            memo.entries.clear();
+            return;
+        }
+        const u8* const handle_host = host_of(read.address, sizeof(u32));
+        const u8* const tic_host =
+            host_of(image_table.current_gpu_addr + u64{read.view_index} * sizeof(TICEntry),
+                    sizeof(TICEntry));
+        const u8* const tsc_host =
+            host_of(sampler_table.current_gpu_addr + u64{read.sampler_index} * sizeof(TSCEntry),
+                    sizeof(TSCEntry));
+        if (handle_host == nullptr || tic_host == nullptr || tsc_host == nullptr) {
+            memo.entries.clear();
+            return;
+        }
+        SampledTextureMemo::Entry entry{
+            .handle_address = read.address,
+            .handle_host = handle_host,
+            .tic_host = tic_host,
+            .tsc_host = tsc_host,
+            .tic = image_table.descriptors[read.view_index],
+            .tsc = sampler_table.descriptors[read.sampler_index],
+            .raw = 0,
+            .view_index = read.view_index,
+            .view = views[i].id,
+            .sampler = samplers[i],
+        };
+        std::memcpy(&entry.raw, handle_host, sizeof(entry.raw));
+        // The word must still give the indices the resolve used, and the descriptors must be the
+        // ones the tables hold for them (what the ids were resolved from).
+        if (Tegra::Texture::TexturePair(entry.raw, via_header_index) !=
+                std::pair<u32, u32>{read.view_index, read.sampler_index} ||
+            std::memcmp(entry.tic_host, &entry.tic, sizeof(entry.tic)) != 0 ||
+            std::memcmp(entry.tsc_host, &entry.tsc, sizeof(entry.tsc)) != 0 ||
+            image_table.bound_ids[read.view_index] != entry.view ||
+            sampler_table.bound_ids[read.sampler_index] != entry.sampler) {
+            memo.entries.clear();
+            return;
+        }
+        memo.entries.push_back(entry);
+    }
+    memo.memory = gpu_memory;
+    memo.image_table = &image_table;
+    memo.host_serial = gpu_memory->HostPointerSerial();
+    memo.image_changes = image_table.changes;
+    memo.sampler_changes = sampler_table.changes;
+    memo.via_header_index = via_header_index;
+    memo.valid = true;
 }
 
 template <class P>
@@ -1093,6 +1240,7 @@ template <class P>
 void TextureCache<P>::WriteMemory(DAddr cpu_addr, size_t size) {
     ClearStale(cpu_addr, size);
     ForEachImageInRegion(cpu_addr, size, [this, cpu_addr, size](ImageId image_id, Image& image) {
+        VideoCommon::Nx2FastDraw::Break(VideoCommon::Nx2FastDraw::Reason::Invalidation);
         ASSERT_MSG(False(image.flags & ImageFlagBits::PartialDownload),
                    "MKW partial readback: a write escaped ordered pre-write completion");
         if (True(image.flags & ImageFlagBits::UnwrittenSparse)) {
@@ -1325,6 +1473,9 @@ void TextureCache<P>::UnmapGPUMemory(size_t as_id, GPUVAddr gpu_addr, size_t siz
     boost::container::small_vector<ImageId, 16> deleted_images;
     ForEachImageInRegionGPU(as_id, gpu_addr, size,
                             [&](ImageId id, Image&) { deleted_images.push_back(id); });
+    if (!deleted_images.empty()) {
+        VideoCommon::Nx2FastDraw::Break(VideoCommon::Nx2FastDraw::Reason::Map);
+    }
     for (const ImageId id : deleted_images) {
         Image& image = slot_images[id];
         ASSERT_MSG(False(image.flags & ImageFlagBits::PartialDownload),
@@ -2504,6 +2655,8 @@ bool TextureCache<P>::ImageCanRescale(ImageBase& image) {
 
 template <class P>
 void TextureCache<P>::InvalidateScale(Image& image) {
+    // Its views are deleted: a fast draw delta draw keeping one must not follow.
+    VideoCommon::Nx2FastDraw::Break(VideoCommon::Nx2FastDraw::Reason::Invalidation);
     if (image.scale_tick <= frame_tick) {
         image.scale_tick = frame_tick + 1;
     }
@@ -4036,6 +4189,7 @@ void TextureCache<P>::DeleteImage(ImageId image_id, bool immediate_delete) {
     std::erase(partial_download_images, image_id);
     ImageBase& image = slot_images[image_id];
     ++images_deleted;
+    VideoCommon::Nx2FastDraw::Break(VideoCommon::Nx2FastDraw::Reason::Invalidation);
     // Drop every decode still queued for it, whatever IsDecoding says: an image re-decoded while
     // a decode was in flight has two, and the first to finish clears the flag. A decode left
     // behind was uploaded into the next image to take this slot (another texture's data: garbage
@@ -4350,11 +4504,18 @@ bool TextureCache<P>::ReplaceUnwrittenSparse(ImageId image_id) {
     }
     Tegra::Nx2SparseMarkWritten(image.gpu_addr, image.guest_size_bytes);
     image.flags |= ImageFlagBits::CpuModified | ImageFlagBits::Remapped;
+    VideoCommon::Nx2FastDraw::Break(VideoCommon::Nx2FastDraw::Reason::Invalidation);
     return true;
 }
 
 template <class P>
 void TextureCache<P>::PrepareImage(ImageId image_id, bool is_modification, bool invalidate) {
+    if (prepare_log != nullptr) {
+        prepare_log->push_back(image_id);
+        if (prepare_log_dry) {
+            return;
+        }
+    }
     Image& image = slot_images[image_id];
     if (invalidate) {
         RestorePartialPages(image);
@@ -4390,14 +4551,11 @@ void TextureCache<P>::PrepareImage(ImageId image_id, bool is_modification, bool 
 template <class P>
 void TextureCache<P>::PrepareImageView(ImageViewId image_view_id, bool is_modification,
                                        bool invalidate) {
-    if (!image_view_id) {
+    // The one gate for which views get prepared (sampled_views.h): never the null view.
+    if (!PreparesImage(slot_image_views, image_view_id)) {
         return;
     }
-    const ImageViewBase& image_view = slot_image_views[image_view_id];
-    if (image_view.IsBuffer()) {
-        return;
-    }
-    PrepareImage(image_view.image_id, is_modification, invalidate);
+    PrepareImage(slot_image_views[image_view_id].image_id, is_modification, invalidate);
 }
 
 template <class P>

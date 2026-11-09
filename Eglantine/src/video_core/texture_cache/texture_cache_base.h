@@ -43,6 +43,7 @@
 #include "video_core/texture_cache/image_info.h"
 #include "video_core/texture_cache/image_view_base.h"
 #include "video_core/texture_cache/render_targets.h"
+#include "video_core/texture_cache/sampled_views.h"
 #include "video_core/texture_cache/stale_pages.h"
 #include "video_core/texture_cache/types.h"
 #include "video_core/textures/texture.h"
@@ -64,6 +65,42 @@ struct ImageViewInOut {
     u32 index{};
     bool blacklist{};
     ImageViewId id{};
+};
+
+/// A texture handle a draw resolved: where its word is and the texture and sampler indices the
+/// full resolve took from it (TexturePair).
+struct TextureHandleRead {
+    GPUVAddr address{};
+    u32 view_index{};
+    u32 sampler_index{};
+};
+
+/// What a draw's sampled textures were resolved from, kept by the pipeline that drew them. The
+/// next draw with the same pipeline resolves its textures from it (ResolveMemoizedTextures) while
+/// every byte they came from is the same: the handle words, the texture and sampler descriptors
+/// and the tables, mappings and views behind them.
+struct SampledTextureMemo {
+    struct Entry {
+        GPUVAddr handle_address{};
+        const u8* handle_host{}; ///< The handle word in host memory
+        const u8* tic_host{};
+        const u8* tsc_host{};
+        TICEntry tic{};
+        TSCEntry tsc{};
+        u32 raw{}; ///< The handle word
+        u32 view_index{}; ///< The texture header index the handle gives
+        ImageViewId view{};
+        SamplerId sampler{};
+    };
+    std::vector<Entry> entries;
+    const void* memory{};      ///< The address space the pointers belong to
+    const void* image_table{}; ///< The channel's table the views were read from
+    u64 host_serial{};         ///< MemoryManager::HostPointerSerial
+    u64 image_changes{};       ///< DescriptorTable::changes of both tables
+    u64 sampler_changes{};
+    bool via_header_index{}; ///< The sampler binding the handles were split with
+    bool valid{};
+    u32 misses{}; ///< Draws in a row that did not find the memo good
 };
 
 struct AsyncDecodeContext {
@@ -232,8 +269,41 @@ public:
     /// Points sampled views of the draw's own colour targets at copies taken before the draw.
     void ReplaceColorFeedbackViews(std::span<ImageViewInOut> views);
 
+    /// Whether the last ReplaceColorFeedbackViews pointed a view at a copy: such views are good
+    /// for that draw only (no texture memo, no fast draw delta draws).
+    [[nodiscard]] bool ReplacedColorFeedbackViews() const noexcept {
+        return color_feedback_views_replaced;
+    }
+
+    /// Fills views and samplers of a draw from the pipeline's memo when nothing they were
+    /// resolved from has changed since (true), and prepares the images as FillImageViews does.
+    /// handle_addresses are where the draw reads its texture handles from, in binding order.
+    /// Graphics only; for pipelines whose descriptors are all sampled textures.
+    [[nodiscard]] bool ResolveMemoizedTextures(SampledTextureMemo& memo,
+                                               std::span<const GPUVAddr> handle_addresses,
+                                               std::span<ImageViewInOut> views,
+                                               std::span<SamplerId> samplers);
+
+    /// Keeps what FillImageViews and GetSamplerId resolved the draw's textures from.
+    void MemoizeTextures(SampledTextureMemo& memo, std::span<const TextureHandleRead> reads,
+                         std::span<const ImageViewInOut> views, std::span<const SamplerId> samplers);
+
+    /// EDEN_NX2_TEXTURE_MEMO_VERIFY: PrepareImage adds the images it is asked to prepare to `log`
+    /// (nullptr stops it) and, with `dry`, does nothing else.
+    void LogPrepares(std::vector<ImageId>* log, bool dry) noexcept {
+        prepare_log = log;
+        prepare_log_dry = dry;
+    }
+
     /// Handle feedback loops during draws.
     void CheckFeedbackLoop(std::span<const ImageViewInOut> views);
+
+    /// Whether sampling the views now needs PrepareImageView: an image with an upload pending, a
+    /// newer alias to copy in or a replacement to make (fast draw delta draws keep their views and
+    /// prepare none).
+    [[nodiscard]] bool SampledViewsChange(std::span<const ImageViewInOut> views) const noexcept {
+        return VideoCommon::SampledViewsChange(views, slot_image_views, slot_images);
+    }
 
     /// Get the sampler from the graphics/compute descriptor table in the specified index
     Sampler* GetSampler(u32 index, bool compute);
@@ -589,6 +659,9 @@ private:
     /// True while a clear binds its render targets (UpdateRenderTargets(true)), so JoinImages can
     /// skip the upload of a new target the clear overwrites whole.
     bool clearing_render_targets = false;
+    bool color_feedback_views_replaced{}; ///< ReplacedColorFeedbackViews
+    std::vector<ImageId>* prepare_log{}; ///< LogPrepares
+    bool prepare_log_dry{};
     bool is_rescaling = false;
     u64 total_used_memory = 0;
     u64 minimum_memory;

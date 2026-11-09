@@ -20,6 +20,7 @@
 #include "shader_recompiler/object_pool.h"
 #include "video_core/control/channel_state.h"
 #include "video_core/dirty_flags.h"
+#include "video_core/nx2_fast_draw.h"
 #include "video_core/engines/kepler_compute.h"
 #include "video_core/engines/maxwell_3d.h"
 #include "video_core/host1x/gpu_device_memory_manager.h"
@@ -308,6 +309,7 @@ void ShaderCache::RemovePendingShaders() {
     marked_for_removal.clear();
 
     if (!removed_shaders.empty()) {
+        Nx2FastDraw::Break(Nx2FastDraw::Reason::Invalidation);
         // Remove the given shaders from the cache
         std::erase_if(storage, [&removed_shaders](const std::unique_ptr<ShaderInfo>& shader) {
             return std::ranges::find(removed_shaders, shader.get()) != removed_shaders.end();

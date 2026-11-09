@@ -24,6 +24,7 @@
 #include "video_core/engines/engine_interface.h"
 #include "video_core/engines/maxwell_3d.h"
 #include "video_core/gpu_split.h"
+#include "video_core/nx2_fast_draw.h"
 #include "video_core/nx2.h"
 #include "video_core/nx2_profile.h"
 #include "video_core/semaphore_ledger.h"
@@ -429,12 +430,14 @@ void GpuSplit::MultiMethod(Tegra::Engines::EngineInterface* engine, u32 method, 
     }
 }
 
-void GpuSplit::DeferFunction(std::function<void()>&& func) {
+void GpuSplit::DeferFunction(std::function<void()>&& func, u64 flags) {
     auto* const heap = new std::function<void()>(std::move(func));
-    Defer([heap] {
-        (*heap)();
-        delete heap;
-    });
+    Defer(
+        [heap] {
+            (*heap)();
+            delete heap;
+        },
+        flags);
 }
 
 size_t GpuSplit::Execute(const u64* entry) {
@@ -449,6 +452,9 @@ size_t GpuSplit::Execute(const u64* entry) {
         const u32 method = static_cast<u32>((head >> 8) & 0xffff);
         const u32 argument = static_cast<u32>(head >> 32);
         auto* const engine = back_engine;
+        if (!engine->reports_fast_draw_breaks) {
+            Nx2FastDraw::Break(Nx2FastDraw::Reason::OtherEngine);
+        }
         if ((head & Direct) != 0) {
             Nx2Profile::Scope method_scope{Nx2Profile::Zone::Method};
             engine->ConsumeSink(*system);
@@ -470,6 +476,9 @@ size_t GpuSplit::Execute(const u64* entry) {
         const u32 amount = static_cast<u32>(head >> 32);
         const size_t data = (head & HasSegment) != 0 ? 3 : 2;
         auto* const engine = back_engine;
+        if (!engine->reports_fast_draw_breaks) {
+            Nx2FastDraw::Break(Nx2FastDraw::Reason::OtherEngine);
+        }
         Nx2Profile::Scope method_scope{Nx2Profile::Zone::Method};
         engine->ConsumeSink(*system);
         if ((head & HasSegment) != 0) {
@@ -482,6 +491,9 @@ size_t GpuSplit::Execute(const u64* entry) {
     case Kind::Regs: {
         const u32 count = static_cast<u32>((head >> 8) & 0xff);
         auto* const engine = back_engine;
+        if (!engine->reports_fast_draw_breaks) {
+            Nx2FastDraw::Break(Nx2FastDraw::Reason::OtherEngine);
+        }
         Nx2Profile::Scope method_scope{Nx2Profile::Zone::Method};
         for (u32 i = 0; i < count; ++i) {
             engine->method_sink.emplace_back(static_cast<u32>(entry[1 + i]), static_cast<u32>(entry[1 + i] >> 32));
@@ -498,6 +510,9 @@ size_t GpuSplit::Execute(const u64* entry) {
         return 1 + count;
     }
     case Kind::Call: {
+        if ((head & FastDrawNeutral) == 0) {
+            Nx2FastDraw::Break(Nx2FastDraw::Reason::Call);
+        }
         const size_t payload = static_cast<size_t>((head >> 8) & 0xffffff);
         reinterpret_cast<void (*)(const u64*)>(entry[1])(entry + 2);
         return 2 + payload;

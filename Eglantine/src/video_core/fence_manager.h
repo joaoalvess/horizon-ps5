@@ -26,6 +26,7 @@
 #include "video_core/gpu.h"
 #include "video_core/host1x/host1x.h"
 #include "video_core/host1x/syncpoint_manager.h"
+#include "video_core/nx2_fast_draw.h"
 #include "video_core/nx2_profile.h"
 #include "video_core/rasterizer_interface.h"
 #include "video_core/readback_diagnostics.h"
@@ -218,6 +219,8 @@ private:
             }
             gpu.BeginAsyncGuestWrite();
             SCOPE_EXIT { gpu.EndAsyncGuestWrite(); };
+            // Downloads and operations write guest memory the next draws may read.
+            VideoCommon::Nx2FastDraw::Break(VideoCommon::Nx2FastDraw::Reason::Fence);
             PopAsyncFlushes(pending_flushes.front());
             pending_flushes.pop_front();
             auto operations = std::move(pending_operations.front());
@@ -282,6 +285,10 @@ private:
             }
             gpu.BeginAsyncGuestWrite();
             SCOPE_EXIT { gpu.EndAsyncGuestWrite(); };
+            // Downloads and operations write guest memory the next draws may read: before (a draw
+            // locking the caches after this sees it) and after (one that noted the serial while
+            // they ran).
+            VideoCommon::Nx2FastDraw::Break(VideoCommon::Nx2FastDraw::Reason::Fence);
             size_t texture_pops = 0;
             size_t buffer_pops = 0;
             for (const Released& released : batch) {
@@ -307,6 +314,7 @@ private:
                     operation();
                 }
             }
+            VideoCommon::Nx2FastDraw::Break(VideoCommon::Nx2FastDraw::Reason::Fence);
             {
                 std::unique_lock lock(ring_guard);
                 for (Released& released : batch) {

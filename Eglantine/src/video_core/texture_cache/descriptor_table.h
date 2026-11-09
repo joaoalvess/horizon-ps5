@@ -36,6 +36,7 @@ public:
         // Cleared on the next read: the texture cache invalidates every channel's tables for
         // each image it deletes, dozens of times a frame while its collector runs.
         invalidated = true;
+        ++changes;
     }
 
     [[nodiscard]] std::pair<T, bool> Read(Tegra::MemoryManager const& gpu_memory, u32 index) noexcept {
@@ -70,6 +71,7 @@ public:
     void Refresh(GPUVAddr gpu_addr, u32 limit) noexcept {
         current_gpu_addr = gpu_addr;
         current_limit = limit;
+        ++changes;
         // Power-of-two growth: amortised like the old 0x80000 rounding without 16 MiB per table.
         const size_t num_descriptors = std::bit_ceil(static_cast<size_t>(limit) + 1);
         size_t old_size = read_descriptors.size();
@@ -89,6 +91,9 @@ public:
     GPUVAddr current_gpu_addr{};
     u32 current_limit{};
     bool invalidated{}; ///< read_descriptors is to be cleared before the next read
+    /// Bumped by every Invalidate and Refresh: the ids resolved before are only good while it
+    /// stays the same (texture memo).
+    u64 changes{};
 };
 
 } // namespace VideoCommon

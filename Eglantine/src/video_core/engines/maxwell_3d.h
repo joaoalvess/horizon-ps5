@@ -26,6 +26,7 @@
 #include "video_core/engines/engine_upload.h"
 #include "video_core/gpu.h"
 #include "video_core/macro.h"
+#include "video_core/nx2_fast_draw.h"
 #include "video_core/textures/texture.h"
 #include "video_core/engines/maxwell_3d.h"
 
@@ -3262,6 +3263,16 @@ public:
     /// Handles a write to the CB_BIND register.
     void ProcessCBBind(size_t stage_index);
 
+    /// Fast draw (nx2_fast_draw.h): registers that only parameterize the next draw, the next
+    /// constant buffer bind or the buffers a delta draw binds again, or that ProcessMethodCall
+    /// handles, so writing them doesn't end the delta chain.
+    static bool IsFastDrawParameter(u32 method);
+    /// Methods fast draw records as light changes (constant buffer data and binds).
+    static bool IsFastDrawDeltaMethod(u32 method);
+    /// A vertex stream's address, size or limit (not its stride or enable).
+    static bool IsFastDrawVertexBuffer(u32 method);
+    void NoteFastDrawConstantData(GPUVAddr begin, GPUVAddr end);
+
     /// Handles a write to the CB_DATA[i] register.
     void ProcessCBData(u32 value);
     /// A run of CB_DATA writes from the split GPU thread's front (GpuSplit::CbDataWrite): words
@@ -3336,6 +3347,10 @@ private:
     bool IsMethodExecutable(u32 method);
 
     MemoryManager& memory_manager;
+
+    /// Device memory of the texture and sampler header tables (NoteFastDrawConstantData).
+    VideoCommon::Nx2FastDraw::DeviceSpans fast_draw_header_spans;
+    VideoCommon::Nx2FastDraw::DeviceSpans fast_draw_sampler_spans;
 
     VideoCore::RasterizerInterface* rasterizer = nullptr;
 

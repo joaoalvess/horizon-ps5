@@ -25,6 +25,7 @@
 #include "video_core/gpu_split.h"
 #include "video_core/memory_manager.h"
 #include "video_core/nx2.h"
+#include "video_core/nx2_fast_draw.h"
 #include "video_core/rasterizer_interface.h"
 #include "video_core/semaphore_ledger.h"
 
@@ -72,6 +73,22 @@ void OnBack(const Func& func) {
 
 void DrainBack() {
     VideoCommon::GpuSplit::Get().Drain();
+}
+
+// A semaphore acquire: what the CPU (or another channel) wrote before the release it waits for
+// can change what the next draws resolve to (texture handles, headers), so they don't take the
+// fast draw delta path. With the split the break runs on the back in order (an empty deferred
+// call ends the chain there): a break on the front could land before the back noted a draw sent
+// before the acquire, and the chain would run across it.
+void BreakFastDrawAtAcquire() {
+    if (!VideoCommon::Nx2FastDraw::Enabled()) {
+        return;
+    }
+    if (auto& split = VideoCommon::GpuSplit::Get(); split.Active()) {
+        split.Defer([] {});
+    } else {
+        VideoCommon::Nx2FastDraw::Break(VideoCommon::Nx2FastDraw::Reason::Fence);
+    }
 }
 
 // Where the last release of each semaphore word was queued for the back (every channel's puller
@@ -405,7 +422,10 @@ void Puller::ProcessSemaphoreTriggerMethod(DmaPusher& dma_pusher) {
         if (auto& split = VideoCommon::GpuSplit::Get(); split.Active()) {
             split.NoteRelease(sequence_address);
         }
-    } else if (g_nx2_ampere) {
+        return;
+    }
+    BreakFastDrawAtAcquire();
+    if (g_nx2_ampere) {
         // Switch 2 waits on semaphores the CPU (or another channel) releases, e.g. once it has
         // written the commands this channel runs next: suspend the channel until the value is
         // met instead of reading ahead (approach from changes.patch).
@@ -546,6 +566,7 @@ void Puller::ProcessSemaphoreRelease(DmaPusher& dma_pusher) {
 }
 
 void Puller::ProcessSemaphoreAcquire(DmaPusher& dma_pusher) {
+    BreakFastDrawAtAcquire();
     DrainBack();
     u32 word = dma_pusher.memory_manager.Read<u32>(regs.semaphore_address.SemaphoreAddress());
     const auto value = regs.semaphore_acquire;
@@ -579,6 +600,7 @@ void Puller::ProcessSemaphoreExecute(DmaPusher& dma_pusher, u32 argument) {
         }
         return;
     }
+    BreakFastDrawAtAcquire();
     if (operation == 6) {
         ForgetRelease(dma_pusher, address);
     }

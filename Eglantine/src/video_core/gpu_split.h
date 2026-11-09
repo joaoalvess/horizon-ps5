@@ -104,18 +104,23 @@ public:
         Commit(1);
     }
 
+    /// Defer flag: the call can't change what a draw resolves to, so it doesn't end the fast
+    /// draw delta chain (nx2_fast_draw.h). Every other deferred call does.
+    static constexpr u64 FastDrawNeutral = 1 << 7;
+
     /// Runs `func` on the back after everything sent before it. Must be trivially copyable.
+    /// `flags`: FastDrawNeutral when `func` can't change what a draw resolves to.
     template <typename Func>
-    void Defer(const Func& func) {
+    void Defer(const Func& func, u64 flags = 0) {
         static_assert(std::is_trivially_copyable_v<Func> && alignof(Func) <= alignof(u64));
         constexpr size_t payload = (sizeof(Func) + sizeof(u64) - 1) / sizeof(u64);
         u64* const entry = Reserve(2 + payload);
-        entry[0] = static_cast<u64>(Kind::Call) | (u64{payload} << 8);
+        entry[0] = static_cast<u64>(Kind::Call) | flags | (u64{payload} << 8);
         entry[1] = reinterpret_cast<u64>(&CallThunk<Func>);
         std::memcpy(entry + 2, &func, sizeof(Func));
         Commit(2 + payload);
     }
-    void DeferFunction(std::function<void()>&& func);
+    void DeferFunction(std::function<void()>&& func, u64 flags = 0);
 
     /// EDEN_NX2_SPLIT_CHECK=1 (debug): reports, with its stack, a thread other than the back
     /// using back-owned state (the Vulkan scheduler) while the back runs entries.
