@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 
 #include "common/assert.h"
@@ -251,8 +252,27 @@ void ShaderReuseCache::Add(const ShaderTranslationKey& key,
     const bool known{std::ranges::any_of(variants, [&shaders](const auto& variant) {
         return variant->reads == shaders->reads;
     })};
-    if (!known) {
-        variants.push_back(std::move(shaders));
+    if (known) {
+        return;
+    }
+    if (variants.empty()) {
+        order.push_back(key);
+    }
+    total_bytes += shaders->code_bytes;
+    variants.push_back(std::move(shaders));
+    static const size_t budget = [] {
+        const char* value = std::getenv("EDEN_NX2_SHADER_REUSE_MIB");
+        return static_cast<size_t>(value != nullptr ? std::strtoull(value, nullptr, 10) : 32) << 20;
+    }();
+    while (total_bytes > budget && order.size() > 1) {
+        const ShaderTranslationKey oldest{order.front()};
+        order.pop_front();
+        if (const auto it{entries.find(oldest)}; it != entries.end()) {
+            for (const auto& variant : it->second) {
+                total_bytes -= (std::min)(total_bytes, variant->code_bytes);
+            }
+            entries.erase(it);
+        }
     }
 }
 

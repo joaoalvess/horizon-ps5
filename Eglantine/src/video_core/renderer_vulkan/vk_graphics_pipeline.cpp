@@ -325,11 +325,17 @@ GraphicsPipeline::GraphicsPipeline(
         }
     }
 
+    // Before the build is queued: the build lets go of the modules (below).
+    configure_func = ConfigureFunc(*spv_modules, stage_infos);
     auto func{[this, shader_notify, &render_pass_cache, pipeline_statistics] {
         const VkRenderPass render_pass{render_pass_cache.Get(MakeRenderPassKey(key.state, device))};
         Validate();
         try {
             MakePipeline(render_pass);
+            // The pipeline holds the compiled code: the driver's copies of the SPIR-V go. Kept for
+            // every pipeline they were Eden's largest heap holder (Mario Kart World: 110 MiB in
+            // 3,585 modules, growing with each pipeline a race builds).
+            spv_modules.reset();
         } catch (const vk::Exception& exception) {
             LOG_CRITICAL(Render_Vulkan,
                          "Graphics pipeline build failed: {} (stages: tcs={} tes={} geom={}, "
@@ -337,6 +343,7 @@ GraphicsPipeline::GraphicsPipeline(
                          exception.what(), (*spv_modules)[1] ? 1 : 0, (*spv_modules)[2] ? 1 : 0,
                          (*spv_modules)[3] ? 1 : 0, key.state.patch_control_points_minus_one.Value() + 1,
                          device.GetMaxTessellationPatchSize());
+            spv_modules.reset();
             std::scoped_lock lock{build_mutex};
             is_built = true;
             build_condvar.notify_one();
@@ -361,7 +368,6 @@ GraphicsPipeline::GraphicsPipeline(
     } else {
         func();
     }
-    configure_func = ConfigureFunc(*spv_modules, stage_infos);
 }
 
 void GraphicsPipeline::AddTransition(GraphicsPipeline* transition) {

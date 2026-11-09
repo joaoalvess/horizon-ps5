@@ -17,6 +17,7 @@
 
 #include <array>
 #include <compare>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -195,6 +196,8 @@ struct ReusableShaders {
     std::array<Shader::Info, Maxwell::MaxShaderStage> infos;
     /// What translation asked each program's environment, in the order the environments come.
     boost::container::static_vector<TranslationReads, Maxwell::MaxShaderProgram> reads;
+    /// Bytes of SPIR-V behind the modules (the driver keeps a copy per module).
+    size_t code_bytes{};
 
     /// The stage infos as GraphicsPipeline takes them: null for stages without a module.
     [[nodiscard]] std::array<const Shader::Info*, Maxwell::MaxShaderStage> InfoPointers() const;
@@ -230,6 +233,12 @@ private:
 
     mutable std::mutex mutex;
     ::Common::unordered_map<ShaderTranslationKey, Variants, ShaderTranslationKeyHash> entries;
+    /// Keys oldest first, and the SPIR-V bytes their shaders hold: past the budget
+    /// (EDEN_NX2_SHADER_REUSE_MIB, 32 by default) the oldest keys go. Kept for every key, the modules
+    /// were Eden's largest heap holder on Mario Kart World (110 MiB, growing with each race); a key
+    /// that went is translated again if a pipeline needs it.
+    std::deque<ShaderTranslationKey> order;
+    size_t total_bytes{};
 };
 
 } // namespace Vulkan

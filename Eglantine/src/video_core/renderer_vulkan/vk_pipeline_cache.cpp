@@ -1325,6 +1325,7 @@ std::shared_ptr<ReusableShaders> PipelineCache::BuildGraphicsShaders(
     }
     std::array<const Shader::Info*, Maxwell::MaxShaderStage> infos{};
     auto modules{std::make_shared<GraphicsShaderModules>()};
+    size_t code_bytes{};
 
     const Shader::IR::Program* previous_stage{};
     Shader::Backend::Bindings binding;
@@ -1362,6 +1363,7 @@ std::shared_ptr<ReusableShaders> PipelineCache::BuildGraphicsShaders(
         device.SaveShader(code);
         VideoCommon::LoadingProbe::compiler.Mark("module", key.unique_hashes[index]);
         (*modules)[stage_index] = BuildShader(device, code);
+        code_bytes += code.size() * sizeof(u32);
         VideoCommon::LoadingProbe::compiler.Mark("done", key.unique_hashes[index]);
 
         // Text log + .spv dump. Text log is gated by gpu_log_level != Off; .spv dump
@@ -1391,6 +1393,7 @@ std::shared_ptr<ReusableShaders> PipelineCache::BuildGraphicsShaders(
 
     auto shaders{std::make_shared<ReusableShaders>()};
     shaders->modules = std::move(modules);
+    shaders->code_bytes = code_bytes;
     for (size_t stage = 0; stage < infos.size(); ++stage) {
         if (infos[stage]) {
             shaders->infos[stage] = *infos[stage];
