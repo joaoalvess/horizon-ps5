@@ -1094,6 +1094,9 @@ void DmaPusher::FlushGpuWrittenCommands(GPUVAddr address, size_t size) {
         [&] {
             if (memory_manager.IsMemoryDirty(address, size, VideoCommon::CacheType::BufferCache)) {
                 ++stats.dirty;
+                if (auto& split = VideoCommon::GpuSplit::Get(); list_drain != 0 && split.Active()) {
+                    split.Drain();
+                }
                 memory_manager.FlushRegion(address, size, VideoCommon::CacheType::BufferCache);
             }
         });
