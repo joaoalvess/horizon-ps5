@@ -6,15 +6,6 @@ What the upstream sync of 2026-11-10 (stage 7 of [PLAN.md](../PLAN.md#upstream-s
 
 Units the batches S1a, S1c, S1b and S3 were meant to take, or took in part.
 
-### Core patch 0063 fast-draw-texture-memo (EglantinePS5 #92)
-
-- Source: [prs/eglantineps5-main.md](prs/eglantineps5-main.md), +1610 -28, 29 files, verdict `adapt`.
-- What it does: A draw with the same pipeline after only light state changes keeps the previous resolve's pipeline, image views, samplers and texture buffers; a per-pipeline texture memo; every semaphore acquire breaks the chain on the back (`EDEN_NX2_FAST_DRAW=0`, `EDEN_NX2_TEXTURE_MEMO=0`, `..._VERIFY=1`) (Lichii #858, #921, #910)
-- Applies to `v2`: conflict: `engines/maxwell_3d.cpp`, `engines/puller.cpp`, `gpu_split.cpp`, `vk_scheduler.cpp`, `vk_scheduler.h`, `texture_cache/descriptor_table.h`, `texture_cache/texture_cache_base.h` (11 regions; needs 0029, and 0026 for the puller). vkport: `buffer_cache.h`, `buffer_cache_base.h`, `vk_rasterizer.cpp`, `vk_scheduler.cpp`, `vk_scheduler.h`, `texture_cache.h`; cmake: `maxwell_3d.cpp`, `macro.cpp`, `gpu.cpp`, `gpu_thread.cpp`, `buffer_cache_base.h`, `vk_scheduler.h`
-- Triage note: The patch aimed at `v2`'s Bananza limit: gate 15.8-16.0 to 16.9-17.1 FPS, per-draw setup 5.7 to 2.7 microseconds, 90% of draws on the delta path, 0 mismatches in 1.1 M verified draws per 10 s (Lichii: 11.65 to 14.83 fps on a PC). It should win over `v2`'s unvalidated pipeline-state fast path (`j-draw-path-1.diff`): it ships its own verify mode. Three things to redo on `v2`: `vk_scheduler`'s `render_pass_serial` beside `v2`'s `recording_epoch` (step 41); the memo and the delta path must miss on draws whose views `ReplaceColorFeedbackViews` replaced (a memo hit would sample a stale shadow copy); and the acquire break must sit in `v2`'s puller paths (ledger). Delta units li#858, li#921, li#910
-- Why it is out: Tried in batch S3 and deferred. Its 8 conflict regions resolve, but as written it compiles and draws wrong on `v2`: `ConfigureDelta`'s indirect offset parameter has a default, so the delta draw binds the wrong buffer.
-- What it takes: On top of 0029 and 0026, both on `v2` now: pass `desc.indirect_offset` to `ConfigureDelta`; keep descriptors with `v2`'s `handle_program` out of both the memo and the delta draws; signal the memo hit and the delta capture from `ReplaceColorFeedbackViews`; use `alias_modification_tick` in `sampled_views.h`; break the chain on `gpu_thread.cpp`'s `before_later_reads` path; take the companion change of `tools/check-gpu-sync-stop.py`. Run it first on DK Bananza with the patch's own verify mode (the `..._VERIFY=1` switches in the note above). It is the largest expected gain left, and li#949's uniform keeps and descriptor replay depend on it.
-
 ### li#878: vulkan: free compute IR before a synchronous driver compile (precache memory)
 
 - Source: [delta/gpu-core.md](delta/gpu-core.md), +75 -2, 4 files, 1 commits, verdict `port`.
@@ -218,7 +209,7 @@ Cut by the owner on 2026-11-10. Each needs a console A/B to be kept or dropped.
 - Source: [delta/gpu-core.md](delta/gpu-core.md), +1412 -50, 28 files, 1 commits, verdict `depends`.
 - Triage note: Three things: semaphore acquires checked without draining the split, small uniform buffers kept between fast draw delta draws, and image descriptors replayed on them (Bananza gate 14.3 to 15.9 fps with all three, +0.7 from the acquires alone); the last two need li#858 (port, ps5 patch 0063), then measure on DK with their VERIFY switches; the acquire part overlaps v2's own ledger (puller.cpp QueuedRelease and AcquireChecksRawWordFirst, steps 36 and 38) and ps5 patch 0026, and its first commit is dj#639 (depends); its lock-free waiter latch and 1 ms drain valve (an MKW ghost replay hang) are worth lifting; 21 conflicts; anchors: buffer_cache.h, buffer_cache_base.h, pipeline_helper.h, vk_rasterizer.cpp, texture_cache.h; cmake: maxwell_3d.cpp, gpu_thread.cpp.
 - Why it is out: Batch S6 (measure), cut by the owner on 2026-11-10.
-- What it takes: Needs 0063 first. Upstream it is a draft with 21 conflicts and one broken run. Its acquire part overlaps what 0026 (`6aeecb2`) now does on `v2`.
+- What it takes: 0063 is on `v2` now (`9107849`), so its uniform keeps and descriptor replay can be ported. Upstream it is a draft with 21 conflicts and one broken run. Its acquire part overlaps what 0026 (`6aeecb2`) now does on `v2`.
 
 ### EglantinePS5 #49: 64-bit fastmem window (`EDEN_FASTMEM64=1`)
 
@@ -306,8 +297,14 @@ From [console-findings-20261110.md](console-findings-20261110.md). Nobody upstre
 ### DK Bananza is limited by the GPU back thread
 
 - What it is: 2,300-3,000 submissions a second and about 720 synchronous readbacks a second. 24.9 fps on the reference route (`dk-run3-noprof-1249`).
-- Why it is out: Batch S3 on `v2` attacks it (0026, 0027, 0028, 0018, 0061, 0062, 0030); not yet run on the console.
-- What it takes: After S3 is measured: 0063, then li#816 and li#949.
+- Why it is out: Batch S3 on `v2` attacks it (0026, 0027, 0028, 0018, 0061, 0062, 0030, 0063); not yet run on the console.
+- What it takes: After S3 is measured: li#816, then li#949.
+
+### `tools/check-semaphore-acquire-clock.py` does not compile
+
+- What it is: The script lifts the Ampere branch of `Puller::ProcessSemaphoreTriggerMethod` into a test program. `v2`'s branch calls the ledger and release tracking helpers (`QueuedRelease`, `AcquireChecksRawWordFirst`, `MetByPendingRelease`, `MetAfterPendingRelease`), which the script does not stub, so `clang++-18` rejects it.
+- Why it is out: No build script runs it; EglantinePS5's copy is the same file.
+- What it takes: Stub the four helpers and the `u64` and `HW_GPU` names in the script, or drop it.
 
 ### `make test` never completed
 
