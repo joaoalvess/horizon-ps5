@@ -4,7 +4,7 @@ What the upstream sync of 2026-11-10 (stage 7 of [PLAN.md](../PLAN.md#upstream-s
 
 ## Left out while porting
 
-Units the batches S1a, S1c, S1b and S3 were meant to take, or took in part.
+Units the batches S1a, S1c, S1b, S3 and S4 were meant to take, or took in part.
 
 ### li#878: vulkan: free compute IR before a synchronous driver compile (precache memory)
 
@@ -67,6 +67,77 @@ Units the batches S1a, S1c, S1b and S3 were meant to take, or took in part.
 - Triage note: The only work measured on the owner's kind of console (12,224 MiB): Mario Kart World went from 0 of 3 runs reaching a race to 3 of 7, later two whole 500 s runs. Parts: file descriptor cap (`MESA_DISK_CACHE_DATABASE_NUM_PARTS=4`, a `setenv` in `main.cpp`; the console gives a process 267 descriptors); RADV trim quarantine (`RADV_PS5_TRIM_QUARANTINE_MS`, 2000); heap arena release and page-out; packing of GPU-reachable slots (`EDEN_CRAM_PACK_GPU=0` off) from 3 GiB largest free block and 30 s cold; JIT code cache steps taken as 2 MiB pieces; `EDEN_GUEST_FREE_ZERO`. Risks: packing was a GPU hang cause upstream before #88, so add this group only after `v2`'s own hang is understood; the JIT code cache change is checked by `check-jit-allocator.py`, which our Rosetta build skips. Section 6
 - Why it is out: Taken in part (`7e115e3`): only `MESA_DISK_CACHE_DATABASE_NUM_PARTS=4` in `headless/main.cpp`. Core patches 0055 and 0058 came with it, but 0055's descriptor census has no caller on `v2`, and 0058 alone only frees shader modules into the heap: the pool gain needs this pull request's heap arena release.
 - What it takes: Needs #68 (on `v2` as `7c9a68c`) and #69 first. See the Mario Kart World memory stack below.
+
+### li#398: shader: gather from a second descriptor buffer as TLD4.B
+
+- Source: [delta/shaders.md](delta/shaders.md), +64 -7, 2 files, 1 commits, verdict `port`.
+- Triage note: v2 rejects a TLD4 whose descriptor buffer differs from the program's bound one ("native texture gather mode", `lower_to_maxwell.h:2145`); this loads the handle with MOV and emits TLD4.B as TEX does. Conflict `lower_to_maxwell.h` (v2 has no bind_texture_buffer helper, inline it as general_tex does at :2479); no owner game named, so take it when a console log shows the rejection.
+- Why it is out: Deferred from batch S4. TLD4.B from a second descriptor buffer is written against Lichii's gather emission, and `v2`'s differs in every mode (depth compare, per-pixel offsets, arrays).
+- What it takes: Rewrite each gather mode on `v2`'s emission and prove it with the translator; `v2` has no `ampere_ported_textures.cpp`, so the test has to come with it. Worth it only if a game's log rejects a program for this form: check the rejected-program lines of Kirby Air Riders and The Duskbloods first.
+
+### li#337: query_cache: keep fence-flagged reports pending until their fence runs
+
+- Source: [delta/gpu-core.md](delta/gpu-core.md), +19 -16, 3 files, 1 commits, verdict `port`.
+- Triage note: At Low accuracy with default fences (what the PS5 sets for Switch 2 titles) a fence-flagged query report was freed at once and its fence could be skipped as empty, so its operation ran before the host GPU had run the work it follows: Ocarina reads wrong reports and flashes white on leaves and walls; v2 has both halves unchanged (is_synced in query_cache.h:283, delay_fence in fence_manager.h:86); take both, the message warns that the fence half alone leaves three channels waiting forever; it adds one real fence per flagged report, so check OoT's frame time with it; pairs with li#215; conflicts: query_cache.h.
+- Why it is out: Deferred from batch S4. Alone it keeps fence-flagged reports pending while `v2`'s macro DMA reads only flush without waiting, so those reads would see stale reports more often (Mario Tennis Fever's occlusion-driven characters).
+- What it takes: Take it together with li#215, which makes the reads wait. Test on Mario Tennis Fever: characters must not flicker or vanish.
+
+### dj:fe2cd8be2b: buffer_cache: don't download GPU data over newer CPU writes
+
+- Source: [delta/gpu-core.md](delta/gpu-core.md), +154 -23, 8 files, 1 commits, verdict `port`.
+- Triage note: A finished async download written back by the fencing thread landed over CPU writes collected but not yet applied (Ocarina's Z-target reticle drawn two frames old on 25-67% of frames): downloads now skip the pending writes (GPUDirtyMemoryManager::ForEachPending) and InvalidateGPUCache hands them to the rasterizer as one batch; the PS5 runs the async GPU thread with fence downloads; its WriteMemory half edits dj:b13c4c1c0c's download, absent from v2, so leave that out; li#397 is the same change; conflicts: buffer_cache.h, buffer_cache_base.h, gpu.cpp, gpu.h, vk_rasterizer.cpp; anchors: buffer_cache.h, vk_rasterizer.cpp; cmake: gpu.cpp.
+- Why it is out: Deferred from batch S4. It is in batch S3's area: six files conflict in ten regions (the buffer cache's download paths, `gpu.cpp`, the rasterizer interface, `vk_rasterizer`), and only its download half is wanted.
+- What it takes: Separate the download half by hand on top of S3 and 0063, then build: the split cannot be checked without one. Do it after the S3 switches are settled on the console, so that a regression has one cause.
+
+### Core patch 0068 ocarina-gameplay-shaders (EglantinePS5 #96)
+
+- Source: [prs/eglantineps5-main.md](prs/eglantineps5-main.md), +1575 -291, 20 files, verdict `adapt`.
+- What it does: The anti-aliasing skip names the network's nine passes instead of dropping every HMMA program; lowering forms from upstream nx2 for the gameplay shaders; guest registers R216-R254 shadowed in a second bank (`register_pressure.h`); SPIR-V "not implemented" errors name the emitter
+- Applies to `v2`: conflict: `lower_to_maxwell.h` (32 regions), `register_pressure.h` (13), `instruction.h`, `emit_spirv_atomic.cpp`, `move_register.cpp`, `kepler_compute.cpp`, `oot_network.h` (absent in `v2`), 3 test files (needs 0054)
+- Triage note: Ocarina of Time gameplay (Link's house): black under the HUD to about 40 FPS; 594 more of 3,123 dumped programs lower. `v2` shadows registers with orchid's port (batch 4, `b2c6b4b7cd`, `IR::NUM_REGS` 768, reviewed, step 33 fix) and that side stays: the two `register_pressure.h` do not merge. What `v2` still rejects, by this patch's own test on `v2`'s headers (10 of 23 gameplay forms): `ISETP.EX` with an input predicate, `SHF.R.U64` by an immediate and by a register, `USHF.R.U64`, `F2I` of a negated register, `TLD4` of a 2D array, `TEX` with the handle in a uniform register outside the handle-extract pattern (2), `USEL` under a UP0 guard, one compute form, and the half per-tap gather across an unrelated `LEA.HI` ("native per-tap gather operands"). Port those forms by hand, driven by `ampere_ocarina_gameplay.cpp`, and take `NetworkPassKeys` with 0054
+- Why it is out: Taken in part (`5cdf57b`): MUFU of a negated or absolute uniform register. Two forms are left out: the TEX path for a handle in a uniform register outside the handle-extract pattern (the patch enters its general TEX block with a goto, `v2`'s block is a different lambda) and the constant-offset proof of half per-tap gathers across an unrelated LEA.HI (the patch's per-tap gather is another implementation than `v2`'s). Its SPIR-V and register-bank parts were not in the batch.
+- What it takes: Each form needs a rewrite on `v2`'s texture pass with a harness case. The harness is `/Volumes/Hangar/ps5/scratch/triage-20261110/s4/harness` (141 pass, 13 fail after S4): its 13 failing cases are the list of what Ocarina of Time still rejects.
+
+### li#610: shader: lower TLD4.F16 gathers with fewer than four taps (#498)
+
+- Source: [delta/gpu-core.md](delta/gpu-core.md), +57 -3, 2 files, 1 commits, verdict `port`.
+- Triage note: A TLD4.F16 gather with fewer than four taps (mask 3, one packed destination) failed to lower, so the post-process compute that uses it was never dispatched and the 3D scene stayed black; v2's half-precision gather still requires mask 15 (lower_to_maxwell.h:2148); a hand edit there (pack only the enabled taps, an odd last tap pairs with RZ); its test file is absent from v2; conflicts: lower_to_maxwell.h; ps5 patch 0068 carries the same change.
+- Why it is out: Dropped from batch S4: `v2`'s half-precision gather wrapper already packs only the enabled taps and pairs an odd last tap with RZ, and rejects the masks upstream's test expects rejected.
+- What it takes: Nothing expected. Listed so it is not mistaken for an oversight.
+
+### li#778: Import from Frizti's Fritchii v4: OoT water flicker, staging buffer reuse, per-method switch reads
+
+- Source: [delta/gpu-core.md](delta/gpu-core.md), +531 -10, 16 files, 1 commits, verdict `port`.
+- Triage note: Take d603d98bb3 only: a texture whose handle word is where a storage buffer keeps its address gets the null view and sampler (Ocarina's water flicker; shader_handle_program.h, vk_compute_pipeline.cpp, vk_graphics_pipeline.cpp); leave its staging buffer retention (two idle buffers per level up to 32 MiB, under 128 MiB, on the vk_staging_buffer_pool.cpp anchor, pool memory the PS5 shares with the guest), the fence profile lines, the per-method switch reads and the tests; conflicts: maxwell_3d.cpp, maxwell_3d.h, fence_manager.h, tests/CMakeLists.txt (10 in all); anchors: vk_staging_buffer_pool.cpp.
+- Why it is out: Taken in part (`852ad29`): the texture handle part (a handle that is a storage pointer reads the null texture). The staging buffer retention, the fence profile lines, the per-method switch reads, the debug tools and the tests are left out.
+- What it takes: The staging buffer retention is the only half with a possible gain; it touches the staging pool that batch S3 changed, so measure the pool on DK Bananza before taking it.
+
+### li#679: vulkan: import the easy AMD fixes from the CheezerWheezer fork survey (EGLA-67)
+
+- Source: [delta/gpu-vulkan.md](delta/gpu-vulkan.md), +245 -17, 8 files, 1 commits, verdict `port`.
+- Triage note: Take four parts that apply to RADV: the blend key rebuilt on every Refresh without dynamic blend state (fixed_pipeline_state.cpp; the console runs dyna_state=2, so it is on this path; Ocarina's forest fog drawn without blending; check the draw-path cost on DK Bananza), the non-Dref compare sampler variant, a null 2D texture for handles past the TIC pool instead of reading garbage descriptors (ReadTextureInfo, crashes and device losses on AMD in Ocarina), and starting empty when the driver rejects the pipeline cache file; leave out the AMD query wait and the eviction hunk (no eviction in the pin), and keep the uneven-BCn-mips-as-RGBA8 rule (it names RADV and costs pool memory) for a measured run; conflict in vk_pipeline_cache.cpp only; anchors: vk_pipeline_cache.cpp, vk_query_cache.cpp, vk_texture_cache.cpp; cmake: shader_environment.cpp (the hunk is above the LoadPipelines cut).
+- Why it is out: Taken in part (`a8d1484`): the blend key rebuilt on every Refresh without dynamic blend state, the sampler variant without comparison for a plain sample, the null 2D texture for a handle past the descriptor pool, and an empty start when the driver rejects the pipeline cache file. The AMD query wait, the eviction hunk and the uneven block mip rule are left out.
+- What it takes: The blend key rebuild has no switch: if a game loses frames after S4 with no other cause, measure `Refresh` first. The AMD query wait is worth a look for Mario Tennis Fever together with li#337 and li#215.
+
+### li#241: shader: retry native lowering with an aligned high uniform base before rejecting
+
+- Source: [delta/shaders.md](delta/shaders.md), +19 -3, 3 files, 1 commits, verdict `port`.
+- Triage note: v2 shadows only from R216, so a program using UR28+ whose own registers fall inside the mirrors is rejected ("native program uses lowering scratch registers", `lower_to_maxwell.h:138`); this retries with an aligned high uniform base and adds shadow lists for `0x219` and LOP3.LUT `0xa12`/`0xc12` (OoT Gerudo Valley rock pixel shaders). Conflict `lower_to_maxwell.h` and it needs adapting to v2's fixed `PrepareRegisterPressure(insn, 216, 180)`; ps5 patch 0069 does the same and is the preferred source.
+- Why it is out: Taken in part (`0d965f1`): the LOP3.LUT shadow list. The retry is left out because `v2` shadows from a fixed, aligned R216 and rejects a native register inside the high mirrors, so there is no misaligned base to retry.
+- What it takes: Nothing expected.
+
+### li#588: shader: shadow the gradient and global atomic registers of TXD and ATOMG (imports #189 by @vouion)
+
+- Source: [delta/shaders.md](delta/shaders.md), +74 -4, 3 files, 1 commits, verdict `port`.
+- Triage note: v2's step 33 put ATOMG `0x9a8` and TXD `0xb6c` in the bit-32 check but `register_pressure.h` has no operand lists for them, so such programs fail with "native register shadowing mode"; this adds lists for `0x9a8`, `0xb6c` and `0xf6c` (it imports li-pr#189, dropped in port-log). Conflicts `lower_to_maxwell.h`, `register_pressure.h`; ps5 patch 0068 has the same lists; OoT.
+- Why it is out: Taken in part (`fcbad9a`): the ATOMG and TXD shadow lists. `v2` has no TXD.B (0xf6c) handler, so that form is still rejected.
+- What it takes: Add the TXD.B handler only if a log rejects a program for opcode 0xf6c.
+
+### Ocarina of Time anti-aliasing bypass needs the software HMMA
+
+- What it is: The network-pass bypass from pull request #82 (`f7ccf67`) acts on programs that lower. With `v2`'s software HMMA opt-in (`EDEN_NX2_SOFT_HMMA=1` unset) the tensor programs are rejected before the bypass is asked.
+- Why it is out: On `v2` the bypass does nothing by default; the launcher setting of #82 was not ported (batch S5).
+- What it takes: Boot Ocarina of Time with `EDEN_NX2_SOFT_HMMA=1` and compare the image and the frame rate with `EDEN_OOT_ANTI_ALIASING=game`. Decide the default from that run.
 
 ## Mario Kart World, if the stall remains
 
