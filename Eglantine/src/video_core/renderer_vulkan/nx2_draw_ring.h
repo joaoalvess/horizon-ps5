@@ -5,9 +5,11 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
+#include <vector>
 
 #include "common/common_types.h"
 
@@ -51,10 +53,38 @@ inline bool Enabled() {
     return enabled;
 }
 
+inline std::atomic<bool> sync_each{};
+
+inline bool SyncEach() {
+    return sync_each.load(std::memory_order_relaxed);
+}
+
 inline void Add(const Entry& entry) {
+    static const std::vector<u64> sync_after = [] {
+        std::vector<u64> programs;
+        for (const char* value = std::getenv("EDEN_NX2_SYNC_AFTER");
+             value != nullptr && *value != '\0';) {
+            char* end{};
+            const u64 program = std::strtoull(value, &end, 16);
+            if (end == value) {
+                break;
+            }
+            programs.push_back(program);
+            value = *end == ',' ? end + 1 : end;
+        }
+        return programs;
+    }();
     State& state{GetState()};
     std::scoped_lock lock{state.mutex};
     state.entries[state.added++ % Capacity] = entry;
+    if (!SyncEach() && std::ranges::any_of(entry.programs, [](u64 program) {
+            return program != 0 && std::ranges::find(sync_after, program) != sync_after.end();
+        })) {
+        sync_each.store(true, std::memory_order_relaxed);
+        std::fprintf(stderr, "NX2_SYNC from tick=%llu\n",
+                     static_cast<unsigned long long>(entry.tick));
+        std::fflush(stderr);
+    }
 }
 
 inline void Dump(u64 waited_tick, u64 gpu_tick, u64 blocked_ms) {
@@ -74,13 +104,16 @@ inline void Dump(u64 waited_tick, u64 gpu_tick, u64 blocked_ms) {
                  static_cast<unsigned long long>(gpu_tick),
                  static_cast<unsigned long long>(state.added));
     u64 small_direct_draws{};
-    for (u64 index = state.added - std::min(state.added, Capacity); index < state.added; ++index) {
+    const bool every_entry{SyncEach()};
+    const u64 shown{every_entry ? u64{16} : Capacity};
+    for (u64 index = state.added - std::min(state.added, shown); index < state.added; ++index) {
         const Entry& entry{state.entries[index % Capacity]};
-        if (entry.tick <= gpu_tick) {
+        if (!every_entry && entry.tick <= gpu_tick) {
             continue;
         }
         const bool direct = entry.kind == Kind::Draw || entry.kind == Kind::DrawIndexed;
-        if (direct && u64{entry.values[0]} * entry.values[1] < LargeDirectDraw) {
+        if (!every_entry && direct &&
+            u64{entry.values[0]} * entry.values[1] < LargeDirectDraw) {
             ++small_direct_draws;
             continue;
         }

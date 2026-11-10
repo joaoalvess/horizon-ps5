@@ -898,6 +898,11 @@ void TraceWindowTarget(const Tegra::Engines::Maxwell3D& maxwell3d, Tegra::Memory
 
 void RasterizerVulkan::Draw(bool is_indexed, u32 instance_count) {
     VideoCommon::Nx2Profile::Scope profile_scope{VideoCommon::Nx2Profile::Zone::Draw};
+    SCOPE_EXIT {
+        if (Nx2DrawRing::SyncEach()) {
+            scheduler.Finish();
+        }
+    };
     {
         // A draw's first and count can come from memory a skipped (rejected) compute program
         // should have written. Past 16M vertices they are garbage: building the quad index
@@ -1231,6 +1236,9 @@ void RasterizerVulkan::DrawIndirect() {
         }
     });
     buffer_cache.SetDrawIndirect(nullptr);
+    if (Nx2DrawRing::SyncEach()) {
+        scheduler.Finish();
+    }
 }
 
 void RasterizerVulkan::DrawTexture() {
@@ -1492,6 +1500,11 @@ void RasterizerVulkan::DispatchCompute() {
     VideoCommon::Nx2Profile::Scope profile_scope{VideoCommon::Nx2Profile::Zone::Compute};
     FlushWork();
     gpu_memory->FlushCaching();
+    SCOPE_EXIT {
+        if (Nx2DrawRing::SyncEach()) {
+            scheduler.Finish();
+        }
+    };
 
     ComputePipeline* const pipeline{pipeline_cache.CurrentComputePipeline()};
     if (!pipeline) {
