@@ -1054,6 +1054,24 @@ void RasterizerVulkan::Draw(bool is_indexed, u32 instance_count) {
                 }
                 return;
             }
+            static const std::vector<u64> skipped_programs = [] {
+                std::vector<u64> programs;
+                for (const char* value = std::getenv("EDEN_NX2_SKIP_MESH_PROGRAMS");
+                     value != nullptr && *value != '\0';) {
+                    char* end{};
+                    const u64 program = std::strtoull(value, &end, 16);
+                    if (end == value) {
+                        break;
+                    }
+                    programs.push_back(program);
+                    value = *end == ',' ? end + 1 : end;
+                }
+                return programs;
+            }();
+            if (std::ranges::find(skipped_programs, ring_programs[0]) != skipped_programs.end() ||
+                std::ranges::find(skipped_programs, ring_programs[1]) != skipped_programs.end()) {
+                return;
+            }
             static u32 diagnostic_mesh_draws{};
             if (diagnostic_mesh_draws++ < 8) {
                 LOG_INFO(Render_Vulkan, "MKW diagnostic: task mesh draw groups={}",
