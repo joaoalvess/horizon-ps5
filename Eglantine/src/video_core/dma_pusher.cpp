@@ -1033,6 +1033,7 @@ void DmaPusher::FlushGpuWrittenCommands(GPUVAddr address, size_t size) {
         const char* value = std::getenv("EDEN_NX2_LIST_DRAIN");
         if (value == nullptr) return 1;
         if (value[0] == '0') return 0;
+        if (value[0] == 'w') return 3;
         return value[0] == '1' ? 1 : 2;
     }();
     static const u64 recent_words = [] {
@@ -1041,9 +1042,18 @@ void DmaPusher::FlushGpuWrittenCommands(GPUVAddr address, size_t size) {
     }();
     struct ListStats {
         u64 lists{}, waited{}, words{}, needed{}, writer_ahead{}, dirty{}, skipped{};
+        u64 read_early{}, unchecked{};
         std::chrono::steady_clock::time_point logged{};
     };
     static ListStats stats;
+    struct UndrainedRead {
+        std::array<u64, 2> pages;
+        u64 consumed;
+        u64 write;
+    };
+    static std::array<UndrainedRead, 256> undrained_reads;
+    static u64 undrained_begin = 0;
+    static u64 undrained_end = 0;
     const auto translate = [&](GPUVAddr page) { return memory_manager.GpuToCpuAddress(page); };
     const auto pages_marked_after = [&](u64 position) {
         constexpr GPUVAddr mask = (GPUVAddr{1} << Nx2WrittenPageBits) - 1;
@@ -1073,8 +1083,34 @@ void DmaPusher::FlushGpuWrittenCommands(GPUVAddr address, size_t size) {
             const bool writer_queued = split.LastWriterPosition() > consumed;
             const bool dirty = list_drain == 2 && !stamped && !recent && !writer_queued &&
                 memory_manager.IsMemoryDirty(address, size, VideoCommon::CacheType::BufferCache);
-            if (list_drain == 1 ||
-                (list_drain == 2 && (stamped || recent || writer_queued || dirty))) {
+            if (list_drain == 3) {
+                while (undrained_begin != undrained_end &&
+                       undrained_reads[undrained_begin % undrained_reads.size()].write <= consumed) {
+                    const auto& read = undrained_reads[undrained_begin++ % undrained_reads.size()];
+                    for (const u64 page : read.pages) {
+                        if (page == 0) continue;
+                        if (const u64 stamp = Nx2PageStamp(page);
+                            stamp >= read.consumed && stamp < read.write) {
+                            ++stats.read_early;
+                            break;
+                        }
+                    }
+                }
+                split.DrainTo(split.LastWriterPosition());
+                if (const u64 reached = split.ConsumedPosition(); reached < write) {
+                    if (undrained_end - undrained_begin == undrained_reads.size()) {
+                        ++undrained_begin;
+                        ++stats.unchecked;
+                    }
+                    constexpr GPUVAddr mask = (GPUVAddr{1} << Nx2WrittenPageBits) - 1;
+                    const auto first = translate(address & ~mask);
+                    const auto last = translate((address + size - 1) & ~mask);
+                    undrained_reads[undrained_end++ % undrained_reads.size()] = {
+                        {first ? *first : 0, last ? *last : 0}, reached, write};
+                    ++stats.skipped;
+                }
+            } else if (list_drain == 1 ||
+                       (list_drain == 2 && (stamped || recent || writer_queued || dirty))) {
                 split.DrainToLastWriter();
             } else {
                 ++stats.skipped;
@@ -1085,9 +1121,10 @@ void DmaPusher::FlushGpuWrittenCommands(GPUVAddr address, size_t size) {
                 stats.logged = std::chrono::steady_clock::now();
                 LOG_INFO(HW_GPU, "GPU-written lists: {} checked, {} waited for the back ({} words each), "
                          "{} needed (a page marked during the wait), {} had a noted writer queued, "
-                         "{} dirty, {} skipped",
+                         "{} dirty, {} skipped, {} read before a queued write, {} unchecked",
                          stats.lists, stats.waited, stats.waited ? stats.words / stats.waited : 0,
-                         stats.needed, stats.writer_ahead, stats.dirty, stats.skipped);
+                         stats.needed, stats.writer_ahead, stats.dirty, stats.skipped,
+                         stats.read_early, stats.unchecked);
             }
         },
         translate,
