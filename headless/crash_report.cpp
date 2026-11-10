@@ -68,6 +68,7 @@ std::atomic<std::uintptr_t> reporter{0};  // the thread writing the report
 std::atomic<bool> helper_failed{false};   // the system refused both the restart and the exit
 std::atomic<bool> leave{false};           // close the app instead of starting it again
 std::atomic<bool> game_started{false};
+std::atomic<bool> never_restart{false};
 
 bool installed = false;
 bool restarted_process = false;
@@ -440,7 +441,8 @@ void WriteReport(const Kind* kind, int code, std::uint64_t address, const Regist
                  const char* reason) noexcept {
     // Right after a restart, with no game started since: the crash comes with starting the app,
     // and starting it again would only repeat it.
-    const bool restart = !(restarted_process && !game_started.load(std::memory_order_relaxed) &&
+    const bool restart = !never_restart.load(std::memory_order_relaxed) &&
+                         !(restarted_process && !game_started.load(std::memory_order_relaxed) &&
                            std::time(nullptr) - started_at < 60);
     leave.store(!restart, std::memory_order_release);
     const Stamp stamp = LocalNow();
@@ -578,6 +580,8 @@ void SetSession(const std::string& text, bool game) noexcept {
     session_now.store(next, std::memory_order_release);
     if (game) game_started.store(true, std::memory_order_relaxed);
 }
+
+void NeverRestart() noexcept { never_restart.store(true, std::memory_order_relaxed); }
 
 void Fail(const char* reason) noexcept {
     if (installed && Enter()) {

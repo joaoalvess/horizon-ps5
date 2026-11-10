@@ -71,6 +71,8 @@ void Install(const std::string& logs_folder, const char* version, bool restarted
 // crash right after a restart (which closes the app instead of starting it over and over).
 void SetSession(const std::string& text, bool game) noexcept;
 
+void NeverRestart() noexcept;
+
 // The app found an error it cannot continue from (an exception nothing caught): the report says
 // why, then the same course as for a signal. Does not return.
 [[noreturn]] void Fail(const char* reason) noexcept;
