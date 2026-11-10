@@ -646,7 +646,45 @@ size_t MemoryManager::MaxContinuousRange(GPUVAddr gpu_addr, size_t size) const {
         entry.serial == serial) {
         return entry.result;
     }
+    // Pointer-table pools are bound up to the end of their mapping and read at a different entry
+    // by each draw (Ocarina's light probe pools, ~150 MiB), so the address never repeats: keep,
+    // per thread and until the page table changes, the intervals walks found to be one device
+    // range; a query inside one is answered from it. An interval is closed when its walk stopped
+    // at a discontinuity.
+    struct Interval {
+        GPUVAddr begin;
+        GPUVAddr end;
+        bool closed;
+    };
+    struct Intervals {
+        size_t owner;
+        u64 serial;
+        std::array<Interval, 128> intervals;
+        size_t count;
+        size_t next;
+    };
+    thread_local Intervals known{};
+    if (known.owner != unique_identifier + 1 || known.serial != serial) {
+        known.owner = unique_identifier + 1;
+        known.serial = serial;
+        known.count = 0;
+        known.next = 0;
+    }
+    for (size_t i = 0; i < known.count; ++i) {
+        const Interval& interval = known.intervals[i];
+        if (gpu_addr >= interval.begin && gpu_addr < interval.end &&
+            (interval.closed || size <= interval.end - gpu_addr)) {
+            const size_t result = (std::min<size_t>)(size, interval.end - gpu_addr);
+            entry = {unique_identifier + 1, gpu_addr, size, serial, result};
+            return result;
+        }
+    }
     const size_t result = MaxContinuousRangeUncached(gpu_addr, size);
+    if (result != 0) {
+        known.intervals[known.next] = {gpu_addr, gpu_addr + result, result < size};
+        known.next = (known.next + 1) % known.intervals.size();
+        known.count = (std::min)(known.count + 1, known.intervals.size());
+    }
     entry = {unique_identifier + 1, gpu_addr, size, serial, result};
     return result;
 }
@@ -692,8 +730,29 @@ size_t MemoryManager::MaxContinuousRangeUncached(GPUVAddr gpu_addr, size_t size)
 }
 
 size_t MemoryManager::GetMemoryLayoutSize(GPUVAddr gpu_addr, size_t max_size) const {
-    std::unique_lock<std::mutex> lock(guard);
-    return kind_map.GetContinuousSizeFrom(gpu_addr);
+    // Native storage buffers ask this on every bind (Ocarina's light probe pools, ~150 MiB, about
+    // 900 times a second at 40 us each): keep answers per thread until the page table changes, as
+    // MaxContinuousRange does. The kind map only changes in Map, MapSparse and Unmap.
+    struct Entry {
+        size_t owner;
+        GPUVAddr gpu_addr;
+        u64 serial;
+        size_t result;
+    };
+    thread_local std::array<Entry, 4096> cache{};
+    const u64 serial = map_serial.load(std::memory_order_acquire);
+    Entry& entry = cache[(gpu_addr * 0x9E3779B97F4A7C15ULL) >> 52];
+    if (entry.owner == unique_identifier + 1 && entry.gpu_addr == gpu_addr &&
+        entry.serial == serial) {
+        return entry.result;
+    }
+    size_t result;
+    {
+        std::unique_lock<std::mutex> lock(guard);
+        result = kind_map.GetContinuousSizeFrom(gpu_addr);
+    }
+    entry = {unique_identifier + 1, gpu_addr, serial, result};
+    return result;
 }
 
 void MemoryManager::InvalidateRegion(GPUVAddr gpu_addr, size_t size,
