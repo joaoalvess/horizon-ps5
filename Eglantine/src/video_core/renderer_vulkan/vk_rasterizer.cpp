@@ -1,3 +1,4 @@
+#include "video_core/oot_network.h"
 #include "video_core/nx2_loading_probe.h"
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
@@ -566,6 +567,15 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
     static const bool no_mesh{std::getenv("EDEN_NX2_NO_MESH") != nullptr};
     if (mesh_draw && (no_mesh || !device.IsExtMeshShaderSupported())) {
         report_failure(no_mesh ? "EDEN_NX2_NO_MESH" : "no VK_EXT_mesh_shader");
+        return;
+    }
+    if (mesh_draw && VideoCommon::OotNetwork::SkipMeshDraws(Settings::GetCurrentProgramID())) {
+        // Ocarina of Time's vegetation: its task programs read what compute programs that do not
+        // build yet would have written (oot_network.h).
+        static bool logged = false;
+        if (!std::exchange(logged, true)) {
+            LOG_INFO(Render_Vulkan, "Ocarina of Time: task/mesh draws are skipped (EDEN_OOT_MESH_DRAWS=draw issues them)");
+        }
         return;
     }
     std::scoped_lock lock{buffer_cache.mutex, texture_cache.mutex};

@@ -69,4 +69,22 @@ inline bool BypassEnabled(u64 program_id) {
     return value == nullptr || std::strcmp(value, "game") != 0;
 }
 
+/// Task/mesh draws. The game culls its vegetation on the GPU: compute programs write per-type task
+/// counts and instance records that its task and mesh programs read. Those compute programs do not
+/// build on this core yet (their global atomics and bare storage pointers need upstream's native
+/// storage buffer tracking), so the task program (1a55fa57a335b963) reads records nobody wrote and
+/// the mesh draws come out as bright stretched triangles flickering across the scene. Until the
+/// culling runs the draws are skipped, which is what happened while the task program was still
+/// rejected by the lowering. EDEN_OOT_MESH_DRAWS=draw issues them (for work on the culling).
+inline bool SkipMeshDraws(u64 program_id) {
+    if (program_id != ProgramId) {
+        return false;
+    }
+    static const bool draw = [] {
+        const char* value = std::getenv("EDEN_OOT_MESH_DRAWS");
+        return value != nullptr && std::strcmp(value, "draw") == 0;
+    }();
+    return !draw;
+}
+
 } // namespace VideoCommon::OotNetwork
