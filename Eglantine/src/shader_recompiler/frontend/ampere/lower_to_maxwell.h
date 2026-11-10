@@ -2846,8 +2846,10 @@ case 0x311: { // F2I.FTZ.U64.TRUNC, per nvdisasm: Maxwell's F2I gives 32 bits, s
         }
         case 0x308: case 0x908: case 0xb08: case 0xd08: { // MUFU
             const u32 operation = insn.Bits(74, 6);
+            // 0xd08: a uniform register source (bits 32-37), with the float modifiers every uniform
+            // ALU source has (.ABS 62, .NEG 63; see operand()).
             if (opcode == 0xd08 && (insn.words[2] != 0x08001000U ||
-                                   insn.Bits(24, 8) || insn.words[1] > 63 || insn.Bits(96, 9)))
+                                   insn.Bits(24, 8) || (insn.words[1] & 0x3fffffc0U) || insn.Bits(96, 9)))
                 return fail(index, "native uniform reciprocal mode");
             if (operation > 8 || operation == 6 || operation == 7 ||
                 insn.Bits(80, 12) != (opcode == 0xd08 ? 0x800U : 0U))

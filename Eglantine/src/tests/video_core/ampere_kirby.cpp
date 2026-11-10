@@ -29,10 +29,36 @@ TEST_CASE("Ampere reciprocal accepts the captured uniform source form", "[video_
     const auto predicated = LowerToMaxwell(code);
     REQUIRE(static_cast<bool>(predicated));
     REQUIRE(((predicated.instructions.front() >> 16) & 15) == 1);
-    for (const u32 source : {64U, 0x80000008U}) {
+    for (const u32 source : {64U, 0x00400008U, 0x20000008U}) {
         auto invalid = code;
         invalid[0].words[1] = source;
         REQUIRE_FALSE(static_cast<bool>(LowerToMaxwell(invalid)));
+    }
+    // A negated source (bit 63) was rejected as unproved. Uniform ALU sources carry .ABS and .NEG
+    // in bits 62 and 63 like register sources (see operand() in the lowering), and five of Ocarina
+    // of Time's gameplay shaders take MUFU.RCP of -UR8: the modifier is applied to a scratch copy
+    // and the reciprocal reads that.
+    for (const u32 modifier : {0x80000000U, 0x40000000U, 0xc0000000U}) {
+        auto modified = code;
+        modified[0].words[0] = 0x00187d08;
+        modified[0].words[1] = 8 | modifier;
+        const auto lowered = LowerToMaxwell(modified);
+        INFO(lowered.error);
+        REQUIRE(static_cast<bool>(lowered));
+        const u64 reciprocal = lowered.instructions[lowered.instructions.size() - 2];
+        REQUIRE((reciprocal >> 51) == (0x5080000000000000ULL >> 51));
+        const u32 source = static_cast<u32>((reciprocal >> 8) & 0xff);
+        REQUIRE(source >= 246); // a scratch copy, never UR8's mirror (R224) itself
+        const u64 negate = 0x0400000000070000ULL | source | (u64{source} << 8) |
+                           (u64{0x80000000U} << 20) | (2ULL << 53);
+        const u64 absolute = 0x0400000000070000ULL | source | (u64{source} << 8) |
+                             (u64{0x7fffffffU} << 20);
+        const auto has = [&](u64 word) {
+            return std::find(lowered.instructions.begin(), lowered.instructions.end(), word) !=
+                   lowered.instructions.end();
+        };
+        REQUIRE(has(negate) == ((modifier & 0x80000000U) != 0));
+        REQUIRE(has(absolute) == ((modifier & 0x40000000U) != 0));
     }
     for (const u32 mode : {0x08000000U, 0x08001400U, 0x08001200U, 0x08011000U}) {
         auto invalid = code;
