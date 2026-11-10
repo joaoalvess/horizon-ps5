@@ -711,6 +711,19 @@ void RasterizerVulkan::Draw(bool is_indexed, u32 instance_count) {
         const DrawParams draw_params{MakeDrawParams(draw_state, num_instances, is_indexed)};
 
         if (mesh_draw) {
+            constexpr u32 MaxMeshGroups = 65535;
+            static const bool group_limit = [] {
+                const char* const value = std::getenv("EDEN_NX2_MESH_GROUP_LIMIT");
+                return value == nullptr || value[0] != '0';
+            }();
+            if (group_limit && draw_params.num_vertices > MaxMeshGroups) {
+                static u32 skipped{};
+                if (skipped++ < 16) {
+                    LOG_WARNING(HW_GPU, "Task/mesh draw skipped: {} groups from {} (past {})",
+                                draw_params.num_vertices, draw_params.base_vertex, MaxMeshGroups);
+                }
+                return;
+            }
             static u32 diagnostic_mesh_draws{};
             if (diagnostic_mesh_draws++ < 8) {
                 LOG_INFO(Render_Vulkan, "MKW diagnostic: task mesh draw groups={}",

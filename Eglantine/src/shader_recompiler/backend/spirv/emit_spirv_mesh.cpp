@@ -27,6 +27,16 @@ bool TaskCountStartsAtZero() {
     return zero;
 }
 
+constexpr u32 MaxMeshGroups = 65535;
+
+bool MeshGroupLimit() {
+    static const bool limit = [] {
+        const char* const value = std::getenv("EDEN_NX2_MESH_GROUP_LIMIT");
+        return value == nullptr || value[0] != '0';
+    }();
+    return limit;
+}
+
 void Barrier(EmitContext& ctx) {
     ctx.OpControlBarrier(ctx.Const(static_cast<u32>(spv::Scope::Workgroup)),
                          ctx.Const(static_cast<u32>(spv::Scope::Workgroup)),
@@ -118,7 +128,9 @@ void ConvertDepth(EmitContext& ctx, Id vertex) {
 
 void TaskEpilogue(EmitContext& ctx) {
     Barrier(ctx);
-    const Id count{ctx.OpLoad(ctx.U32[1], PayloadWord(ctx, ctx.Const(1U)))};
+    const Id written{ctx.OpLoad(ctx.U32[1], PayloadWord(ctx, ctx.Const(1U)))};
+    const Id count{MeshGroupLimit() ? ctx.OpUMin(ctx.U32[1], written, ctx.Const(MaxMeshGroups))
+                                    : written};
     const Id one{ctx.Const(1U)};
     // Marker for OpEmitMeshTasksEXT count, 1, 1, payload (PatchMeshInstructions).
     ctx.OpStore(count, one);
