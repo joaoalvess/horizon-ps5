@@ -35,6 +35,7 @@
 #include "video_core/memory_manager.h"
 #include "video_core/renderer_vulkan/fixed_pipeline_state.h"
 #include "video_core/renderer_vulkan/maxwell_to_vk.h"
+#include "video_core/renderer_vulkan/nx2_draw_ring.h"
 #include "video_core/renderer_vulkan/pipeline_helper.h"
 #include <array>
 #include "video_core/renderer_vulkan/nir_handoff.h"
@@ -1158,6 +1159,23 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
             shader_reuse.Add(translation_key, shaders);
         }
     }
+    if (Nx2DrawRing::Enabled()) {
+        static constexpr std::array slots{"VertexA",  "VertexB",  "TessControl",
+                                          "TessEval", "Geometry", "Fragment"};
+        std::string stages;
+        for (size_t index = 0; index < Maxwell::MaxShaderProgram; ++index) {
+            if (key.unique_hashes[index] == 0) {
+                continue;
+            }
+            const Shader::Info& info{shaders->infos[index == 0 ? 0 : index - 1]};
+            stages += fmt::format(" {}={:016x}",
+                                  info.is_task ? "Task" : info.is_mesh ? "Mesh" : slots[index],
+                                  key.unique_hashes[index]);
+        }
+        LOG_INFO(Render_Vulkan, "NX2 pipeline {:016x}:{} topology={} patch_points={}", hash, stages,
+                 static_cast<u32>(key.state.topology.Value()),
+                 key.state.patch_control_points_minus_one.Value() + 1);
+    }
     Common::ThreadWorker* const thread_worker{build_in_parallel ? &workers : nullptr};
     return std::make_unique<GraphicsPipeline>(
         scheduler, buffer_cache, texture_cache, vulkan_pipeline_cache, &shader_notify, device,
@@ -1685,6 +1703,11 @@ std::unique_ptr<ComputePipeline> PipelineCache::CreateComputePipeline(
     }
 
     LOG_DEBUG(Render_Vulkan, "{:#016x}", hash);
+    if (Nx2DrawRing::Enabled()) {
+        LOG_INFO(Render_Vulkan, "NX2 pipeline {:016x}: Compute={:016x} workgroup={}x{}x{}", hash,
+                 key.unique_hash, key.workgroup_size[0], key.workgroup_size[1],
+                 key.workgroup_size[2]);
+    }
 
     Shader::Maxwell::Flow::CFG cfg{env, pools.flow_block, env.StartAddress()};
 

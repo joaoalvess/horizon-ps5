@@ -38,6 +38,7 @@
 #include "video_core/renderer_vulkan/fixed_pipeline_state.h"
 #include "video_core/renderer_vulkan/framebuffer_clear_layers.h"
 #include "video_core/renderer_vulkan/maxwell_to_vk.h"
+#include "video_core/renderer_vulkan/nx2_draw_ring.h"
 #include "video_core/renderer_vulkan/vk_buffer_cache.h"
 #include "video_core/renderer_vulkan/vk_compute_pipeline.h"
 #include "video_core/renderer_vulkan/vk_descriptor_pool.h"
@@ -73,6 +74,8 @@ struct DrawParams {
     u32 first_index;
     bool is_indexed;
 };
+
+std::array<u64, 3> ring_programs{};
 
 VkViewport GetViewportState(const Device& device, const Maxwell& regs, size_t index, float scale) {
     const auto& src = regs.viewport_transform[index];
@@ -290,6 +293,7 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
     // Task/mesh pipelines: the draw's vertex count is the number of task workgroups.
     VideoCommon::LoadingProbe::gpu.Mark("draw prepare");
     mesh_draw = pipeline->IsMeshPipeline();
+    ring_programs = {pipeline->UniqueHash(1), pipeline->UniqueHash(3), pipeline->UniqueHash(5)};
     // EDEN_NX2_NO_MESH=1: skip task/mesh draws as before they were supported (A/B comparisons).
     static const bool no_mesh{std::getenv("EDEN_NX2_NO_MESH") != nullptr};
     if (mesh_draw && (no_mesh || !device.IsExtMeshShaderSupported())) {
@@ -710,6 +714,16 @@ void RasterizerVulkan::Draw(bool is_indexed, u32 instance_count) {
         const u32 num_instances{instance_count};
         const DrawParams draw_params{MakeDrawParams(draw_state, num_instances, is_indexed)};
 
+        if (Nx2DrawRing::Enabled()) {
+            Nx2DrawRing::Add({scheduler.CurrentTick(),
+                              mesh_draw ? Nx2DrawRing::Kind::Mesh
+                                        : draw_params.is_indexed ? Nx2DrawRing::Kind::DrawIndexed
+                                                                 : Nx2DrawRing::Kind::Draw,
+                              ring_programs,
+                              {draw_params.num_vertices, draw_params.num_instances,
+                               draw_params.first_index, draw_params.base_vertex,
+                               draw_params.base_instance}});
+        }
         if (mesh_draw) {
             constexpr u32 MaxMeshGroups = 65535;
             static const bool group_limit = [] {
@@ -728,6 +742,21 @@ void RasterizerVulkan::Draw(bool is_indexed, u32 instance_count) {
             if (diagnostic_mesh_draws++ < 8) {
                 LOG_INFO(Render_Vulkan, "MKW diagnostic: task mesh draw groups={}",
                          draw_params.num_vertices);
+            }
+            if (Nx2DrawRing::Enabled()) {
+                static std::set<std::tuple<u64, u64, u32, u32, u32>> distinct_mesh_draws;
+                if (distinct_mesh_draws.size() < 4096 &&
+                    distinct_mesh_draws
+                        .emplace(ring_programs[0], ring_programs[1], draw_params.num_vertices,
+                                 draw_params.base_vertex, draw_params.num_instances)
+                        .second) {
+                    LOG_INFO(Render_Vulkan,
+                             "NX2 mesh draw groups={} first={} instances={} "
+                             "programs={:016x},{:016x},{:016x}",
+                             draw_params.num_vertices, draw_params.base_vertex,
+                             draw_params.num_instances, ring_programs[0], ring_programs[1],
+                             ring_programs[2]);
+                }
             }
             scheduler.Record([this, groups = draw_params.num_vertices](vk::CommandBuffer cmdbuf) {
                 if (scheduler.GraphicsPipelineMissing()) {
@@ -783,6 +812,22 @@ void RasterizerVulkan::DrawIndirect() {
                 LOG_WARNING(Render_Vulkan, "Indirect task/mesh draw skipped");
             }
             return;
+        }
+        if (Nx2DrawRing::Enabled()) {
+            std::array<u32, 5> record{};
+            if (!params.is_byte_count) {
+                gpu_memory->ReadBlockUnsafe(params.indirect_start_address, record.data(),
+                                            std::min(params.buffer_size, sizeof(record)));
+            }
+            const u32 count{params.include_count ? gpu_memory->Read<u32>(params.count_start_address)
+                                                 : ~0U};
+            Nx2DrawRing::Add({scheduler.CurrentTick(),
+                              params.is_indexed ? Nx2DrawRing::Kind::DrawIndexedIndirect
+                                                : Nx2DrawRing::Kind::DrawIndirect,
+                              ring_programs,
+                              {static_cast<u32>(params.max_draw_counts),
+                               static_cast<u32>(params.stride), count, record[0], record[1],
+                               record[2], record[3], record[4]}});
         }
         const auto indirect_buffer = buffer_cache.GetDrawIndirectBuffer();
         const auto& buffer = indirect_buffer.first;
@@ -1126,6 +1171,18 @@ void RasterizerVulkan::DispatchCompute() {
 
     const auto& qmd{kepler_compute->launch_description};
     auto indirect_address = kepler_compute->GetIndirectComputeAddress();
+    if (Nx2DrawRing::Enabled()) {
+        std::array<u32, 3> grid{qmd.grid_dim_x, qmd.grid_dim_y, qmd.grid_dim_z};
+        if (indirect_address) {
+            gpu_memory->ReadBlockUnsafe(*indirect_address, grid.data(), sizeof(grid));
+        }
+        Nx2DrawRing::Add({scheduler.CurrentTick(),
+                          indirect_address ? Nx2DrawRing::Kind::DispatchIndirect
+                                           : Nx2DrawRing::Kind::Dispatch,
+                          {pipeline->UniqueHash(), 0, 0},
+                          {grid[0], grid[1], grid[2], qmd.block_dim_x, qmd.block_dim_y,
+                           qmd.block_dim_z}});
+    }
     if (indirect_address) {
         // DispatchIndirect
         static constexpr auto sync_info = VideoCommon::ObtainBufferSynchronize::FullSynchronize;

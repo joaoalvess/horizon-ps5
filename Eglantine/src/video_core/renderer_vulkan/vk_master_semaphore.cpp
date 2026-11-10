@@ -9,8 +9,14 @@
 
 #include <thread>
 
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <limits>
 #include <ranges>
+#include <utility>
 #include "common/settings.h"
+#include "video_core/renderer_vulkan/nx2_draw_ring.h"
 #include "video_core/renderer_vulkan/vk_master_semaphore.h"
 #include "video_core/vulkan_common/vulkan_device.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
@@ -119,7 +125,34 @@ void MasterSemaphore::Wait(u64 tick) {
     // If none of the above is hit, fallback to a regular wait
     VideoCommon::LoadingProbe::wait.Mark("timeline wait", tick);
     try {
-        while (!semaphore.Wait(tick)) {
+        static const u64 stall_ms = [] {
+            const char* const value = std::getenv("EDEN_NX2_STALL_MS");
+            return value != nullptr ? std::strtoull(value, nullptr, 10) : 0ULL;
+        }();
+        const bool watched{stall_ms != 0 || Nx2DrawRing::Enabled()};
+        const u64 slice_ns{watched ? 1'000'000'000ULL : (std::numeric_limits<u64>::max)()};
+        const auto begin{std::chrono::steady_clock::now()};
+        bool dumped{};
+        while (!semaphore.Wait(tick, slice_ns)) {
+            if (!watched) {
+                continue;
+            }
+            const u64 blocked_ms{static_cast<u64>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - begin)
+                    .count())};
+            Refresh();
+            if (!std::exchange(dumped, true)) {
+                Nx2DrawRing::Dump(tick, KnownGpuTick(), blocked_ms);
+            }
+            if (stall_ms != 0 && blocked_ms >= stall_ms) {
+                std::fprintf(stderr, "NX2_STALL waited_tick=%llu gpu_tick=%llu blocked_ms=%llu\n",
+                             static_cast<unsigned long long>(tick),
+                             static_cast<unsigned long long>(KnownGpuTick()),
+                             static_cast<unsigned long long>(blocked_ms));
+                std::fflush(stderr);
+                throw vk::Exception(VK_ERROR_DEVICE_LOST);
+            }
         }
     } catch (const vk::Exception& exception) {
         // The throw ends the process; say why first (a device loss reached nothing else here).
