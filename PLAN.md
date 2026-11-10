@@ -70,6 +70,8 @@ Batches, in order. Each is ported in this worktree's `Eglantine/`, checked with 
 
 Dropped after the independent review (2026-11-10, scratch `review/`): li#1058 (already in the port: `headless/CMakeLists.txt:2347-2373` pins `NotifyShutdown` and injects the same fix, taking it stops the build); 0031 (its fast path needs `!front_macros` and the console runs front macros, so it does nothing, and it needs a `headless/macro_native.cmake` anchor edit; it is not the sink change rejected on 2026-11-07). The review's other findings are in the rows above.
 
+Everything the sync left out, with what each item could bring and what it takes, is in [agents/backlog.md](agents/backlog.md).
+
 ## Build
 
 `tools/docker/run.sh make JOBS=6 RADV_BUILD_JOBS=6` ([docs/BUILDING.md](docs/BUILDING.md#on-a-mac)): an amd64 Ubuntu 24.04 image (`horizon-ps5-build-amd64`) run under OrbStack's Rosetta, `/Volumes/Hangar/ps5` mounted at the same path, `HOME` and ccache in `/Volumes/Hangar/ps5/home-amd64`. Under Rosetta the release checks run in the build except `check-jit-allocator.py` (`EDEN_ROSETTA=1`). `main`'s ZIP was built before that script existed, with the equivalent `docker run` and `EDEN_SKIP_SOURCE_CHECKS=1`, its checks run one by one afterwards.
