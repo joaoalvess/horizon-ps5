@@ -185,3 +185,60 @@ Open pull requests ported after the rows above, in the coordinator's order, from
 | 2026-11-06 | li-pr#192 | lichii | port | 1 | `b8e8e0a5c0` | adapted | c35e706b66, task and mesh half only: the mesh skip dropped from SerializeGraphicsPipeline and LoadDiskResources; no trap_prefix in v2. |
 | 2026-11-06 | li-pr#197 | lichii | port | 2 | `115cc6a20b 237ab47263` | deferred | returning null for a rejected program drops the rethrown matrix-multiply error that KeplerCompute::DispatchNativeCompute needs for v2's UpscaleInsteadOfNativeProgram stand-in (585e457172) after the first dispatch; needs that stand-in keyed on the rejection first. |
 | 2026-11-06 | li-pr#189 | lichii | port | 1 | `619c7d04ea` | dropped | does not stand without li-pr#149: it edits register_pressure.h and the shadow check of li:b3f983a6b8, which v2 lacks (the pin rejects those registers). |
+
+## Upstream sync, batch S1a
+
+Stage 7 of [PLAN.md](../PLAN.md#upstream-sync-2026-11-10), in `v2`'s commit order. Unit is `ps5 patch 00NN` (a core patch of heydemoura/EglantinePS5 at `095df4e`) or `ps5-pr#N` (the pull request's commits outside the core); File is the triage file in [prs/](prs/); Diff is the EglantinePS5 commit taken. The hashes in Notes are `v2`'s own. The core commits were made in `/Volumes/Hangar/ps5/scratch/triage-20261110/work` (branch `sync`) and came into `v2` with `git format-patch -k | git am -k --directory=Eglantine`. Patches 0024 and 0033 and #68 change behaviour and wait on the branch `s1b-hold` for batch S1b.
+
+| Date | Unit | File | Verdict | Commits | Diff | Status | Notes |
+|---|---|---|---|---|---|---|---|
+| 2026-11-10 | ps5 patch 0025 | eglantineps5-main | port | 1 | `ced139a` | picked | ba7ce09. |
+| 2026-11-10 | ps5 patch 0034 | eglantineps5-main | port | 1 | `3c7bcba` | picked | e98c660. |
+| 2026-11-10 | ps5 patch 0035 | eglantineps5-main | port | 1 | `15757b6` | picked | c721e11. |
+| 2026-11-10 | ps5 patch 0036 | eglantineps5-main | port | 1 | `206dc0d` | picked | d7cb310. |
+| 2026-11-10 | ps5 patch 0047 | eglantineps5-main | port | 1 | `4d11c49` | adapted | 92aa77c, its test case goes into ampere_compute_lowering.cpp: v2 has no ampere_pokopia_compute.cpp. be3a1de bumps CACHE_VERSION to Vulkan 32 and GL 28. |
+| 2026-11-10 | ps5 patch 0019 | eglantineps5-main | port | 1 | `39d36b1` | picked | ce49770. |
+| 2026-11-10 | ps5 patch 0058 | eglantineps5-main | port | 1 | `5e1e654` | adapted | d143cbc, the catch block's reset comes after v2's build-failure log, which reads the modules. Alone it frees the modules into the heap; nothing returns to the pool without #84's arena release. |
+| 2026-11-10 | ps5 patch 0055 | eglantineps5-main | port | 1 | `47b54bb` | picked | c5666e9; ReportOpenFiles has no caller on v2. |
+| 2026-11-10 | ps5-pr#90 | eglantineps5-port | port | 1 | `47b54bb` | partial | 7e115e3, only headless/main.cpp's MESA_DISK_CACHE_DATABASE_NUM_PARTS=4; the descriptor census in performance.cpp and nfs/nfs.cpp is left out. |
+| 2026-11-10 | ps5-pr#75 | eglantineps5-port | port | 1 | `03e3341` | dropped | its only commit outside the core edits tools/patch-radv-pieces.py and tools/patch-radv-trim.py, which come with #69 and are not in v2. |
+
+## Upstream sync, batch S1c
+
+Units of [delta/](delta/), in `v2`'s commit order, ported the same way (scratch branch `s1c-final`). Each commit keeps its upstream author and subject.
+
+| Date | Unit | File | Verdict | Commits | Diff | Status | Notes |
+|---|---|---|---|---|---|---|---|
+| 2026-11-10 | dj:9b27d7eac8 | shaders | port | 1 | `61bfe3dce6..9b27d7eac8` | adapted | 4655956, v2's F2I arm kept: the constant-buffer abs and neg bits now reach the load on the plain word form too (it accepted and dropped them), the U16 form already applied them, byte and extended-word still reject them; no cache version bump (S1a's 32/28 covers it); ampere_logged_numeric.cpp is not in v2; upstream's test added to ampere_f2i.cpp. |
+| 2026-11-10 | dj:d713f4462a | common | port | 1 | `abb9ae8426..d713f4462a` | picked | 85340e5. |
+| 2026-11-10 | dj:1b7995d89c | gpu-core | port | 1 | `5778922694..1b7995d89c` | picked | 71c8415. |
+| 2026-11-10 | dj:1725659895 | gpu-core | port | 1 | `1b7995d89c..1725659895` | picked | a44c7c5, beside dj#562's whole-buffer skip; EglantinePS5 patch 0063 does not touch word_manager.h, patch 0064 carries the same early-out (with a comment). |
+| 2026-11-10 | li#414 | gpu-vulkan | port | 1 | `2b70fc5ee9..0a619eaaa7` | picked | 3be9ef2, 61f743c takes the `vk_buffer_cache` wait-site count in `tools/prepare-vulkan-port.py` from 6 to 5. |
+| 2026-11-10 | li#346 | gpu-core | port | 1 | `2ae4c3e402..047ab1d012` | picked | 85f6241, tests/CMakeLists.txt list merged. |
+| 2026-11-10 | li#353 | gpu-vulkan | port | 1 | `7223507e47..79c151694a` | partial | 60b9452, only InvalidateState() after the bare-view BlitColor in blit_image.cpp; the colour write-mask half left out, as the Why says. |
+| 2026-11-10 | li#311 | gpu-core | port | 1 | `077e455c85..aa0acb3ede` | picked | c363067. |
+| 2026-11-10 | li#435 | kernel-memory | port | 1 | `331f53d107..4e9c4cb4a1` | partial | 1621b8e, memory.cpp only: the k_address_arbiter.cpp half is in v2 as 775e8e1c96 and tests/core/memory_acquire.cpp is not in v2. |
+| 2026-11-10 | li#444 | gpu-vulkan | port | 1 | `4e9c4cb4a1..57a6334ec4` | picked | 6d2871e, TickFrame keeps v2's readback_writers.Prune() beside the new drain. |
+| 2026-11-10 | li#427 | gpu-vulkan | port | 1 | `b6d3a82eed..6c9c06cc78` | picked | 516cab7, tests/CMakeLists.txt list merged. |
+| 2026-11-10 | li#580 | gpu-core | port | 1 | `931c9a649b..7083185c43` | picked | 175c565, tests/CMakeLists.txt list merged. |
+| 2026-11-10 | li#700 | gpu-core | port | 1 | `59514b196e..821ccd570a` | adapted | 352c713, accumulator half as upstream; query half is the removal of `return result;` from FlushRegion's callback (v2's VisitQueryRegion already has the right trait, so the walk stopped at the first query waiting for the host); IterateCache unchanged. |
+| 2026-11-10 | li#600 | services | port | 1 | `e7e5fef1fc..455f635a49` | partial | 961ce23, IAudioRenderer command 14 only; nx2_audio_user_client.h unchanged. |
+| 2026-11-10 | li#561 | services | port | 1 | `455f635a49..0dd7c1d554` | picked | 259fa33. |
+| 2026-11-10 | li#727 | services | port | 1 | `88783d558d..c0f8098422` | partial | ab242d2, nifm IGeneralService 101 only; nx2:vi2 201 stays RegisterClientState. |
+| 2026-11-10 | li#699 | gpu-vulkan | port | 1 | `d3cbd3b293..ac166ebc64` | picked | c23bf17. |
+| 2026-11-10 | li#296 | gpu-core | port | 1 | `7cafadfd7d..d590d51820` | picked | 228ffac. |
+| 2026-11-10 | li#878 | gpu-core | port | 1 | `bbf3e62974..fd4ce24c9b` | dropped | ported by hand in the scratch clone and left out: it does not apply to v2's pipeline cache, the hand port had to free the IR on the NIR compute path too, and nothing measures its gain. |
+| 2026-11-10 | li#918 | common | port | 1 | `1c25fbdfb4..281477eac7` | picked | 706940d. |
+| 2026-11-10 | li#957 | common | port | 1 | `cbb512ee7a..cee0c2dbc0` | picked | 6eef87a, tests/CMakeLists.txt list merged. |
+| 2026-11-10 | li#984 | kernel-memory | port | 1 | `b29ef4b583..0fff860be6` | picked | c40f806. |
+| 2026-11-10 | li#1196 | audio | port | 1 | `d2eaae4f3a..314e1d9469` | partial | e24d773, the decode.cpp fix; tests/audio_core/adpcm_decode.cpp left out, it needs tests/core/system_test_context.h, which v2 does not have. |
+
+## Upstream sync, batch S2
+
+The Mario Kart World stall ([mkw-hang-20261110.md](mkw-hang-20261110.md)).
+
+| Date | Unit | File | Verdict | Commits | Diff | Status | Notes |
+|---|---|---|---|---|---|---|---|
+| 2026-11-10 | dj:8e87cf5a66 | gpu-vulkan | port | 1 | `0ca2032bff..8e87cf5a66` | partial | 1e26c76, the shader part only (EmitMeshPrologue stores zero in the task payload's mesh workgroup count), behind `EDEN_NX2_TASK_COUNT_INIT=0`; the Intel paths are left out. |
+
+Beside it, this port's own commits: ecd174c caps the count a task program emits at `maxMeshWorkGroupCount` (`EDEN_NX2_MESH_GROUP_LIMIT=0` restores), 2726a1f records the draws and dispatches behind a stalled submission (`EDEN_NX2_DRAW_RING=1`, `EDEN_NX2_STALL_MS=<ms>`), 7727fd7 closes the app after a crash report (`EDEN_CRASH_NO_RESTART=1`).
