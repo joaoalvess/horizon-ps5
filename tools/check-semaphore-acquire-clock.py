@@ -4,7 +4,7 @@ from pathlib import Path
 import subprocess,tempfile
 root=Path(__file__).resolve().parents[1]
 s=(root/'Eglantine/src/video_core/engines/puller.cpp').read_text()
-a=s.index('    } else if (g_nx2_ampere) {',s.index('void Puller::ProcessSemaphoreTriggerMethod'))
+a=s.index('    if (g_nx2_ampere) {',s.index('void Puller::ProcessSemaphoreTriggerMethod'))
 a=s.index('{',a)+1;end=a;depth=1
 while depth:
  depth+=(s[end]=='{')-(s[end]=='}');end+=1
