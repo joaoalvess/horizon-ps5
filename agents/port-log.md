@@ -188,7 +188,7 @@ Open pull requests ported after the rows above, in the coordinator's order, from
 
 ## Upstream sync, batch S1a
 
-Stage 7 of [PLAN.md](../PLAN.md#upstream-sync-2026-11-10), in `v2`'s commit order. Unit is `ps5 patch 00NN` (a core patch of heydemoura/EglantinePS5 at `095df4e`) or `ps5-pr#N` (the pull request's commits outside the core); File is the triage file in [prs/](prs/); Diff is the EglantinePS5 commit taken. The hashes in Notes are `v2`'s own. The core commits were made in `/Volumes/Hangar/ps5/scratch/triage-20261110/work` (branch `sync`) and came into `v2` with `git format-patch -k | git am -k --directory=Eglantine`. Patches 0024 and 0033 and #68 change behaviour and wait on the branch `s1b-hold` for batch S1b.
+Stage 7 of [PLAN.md](../PLAN.md#upstream-sync-2026-11-10), in `v2`'s commit order. Unit is `ps5 patch 00NN` (a core patch of heydemoura/EglantinePS5 at `095df4e`) or `ps5-pr#N` (the pull request's commits outside the core); File is the triage file in [prs/](prs/); Diff is the EglantinePS5 commit taken. The hashes in Notes are `v2`'s own. The core commits were made in `/Volumes/Hangar/ps5/scratch/triage-20261110/work` (branch `sync`) and came into `v2` with `git format-patch -k | git am -k --directory=Eglantine`. Patches 0024 and 0033 and #68 change behaviour and came with batch S1b, below.
 
 | Date | Unit | File | Verdict | Commits | Diff | Status | Notes |
 |---|---|---|---|---|---|---|---|
@@ -242,3 +242,36 @@ The Mario Kart World stall ([mkw-hang-20261110.md](mkw-hang-20261110.md)).
 | 2026-11-10 | dj:8e87cf5a66 | gpu-vulkan | port | 1 | `0ca2032bff..8e87cf5a66` | partial | 1e26c76, the shader part only (EmitMeshPrologue stores zero in the task payload's mesh workgroup count), behind `EDEN_NX2_TASK_COUNT_INIT=0`; the Intel paths are left out. |
 
 Beside it, this port's own commits: ecd174c caps the count a task program emits at `maxMeshWorkGroupCount` (`EDEN_NX2_MESH_GROUP_LIMIT=0` restores), 2726a1f records the draws and dispatches behind a stalled submission (`EDEN_NX2_DRAW_RING=1`, `EDEN_NX2_STALL_MS=<ms>`), 7727fd7 closes the app after a crash report (`EDEN_CRASH_NO_RESTART=1`).
+
+## Upstream sync, batch S1b
+
+The behaviour changes held out of build 2. Ported in `/Volumes/Hangar/ps5/scratch/triage-20261110/work-s3` (branch `s3`).
+
+| Date | Unit | File | Verdict | Commits | Diff | Status | Notes |
+|---|---|---|---|---|---|---|---|
+| 2026-11-10 | ps5 patch 0024 | eglantineps5-main | port | 1 | `1db8efc` | picked | a46e7f0. |
+| 2026-11-10 | ps5 patch 0033 | eglantineps5-main | port | 1 | `548eba4` | picked | baa691a. |
+| 2026-11-10 | ps5-pr#68 | eglantineps5-port | port | 1 | `e01b2d9` | picked | 7c9a68c; the derived k_memory_manager.cpp and k_page_heap.cpp are built for the first time: free return on (`EDEN_GUEST_FREE_RETURN=0` restores), commit on hand-out live with no switch (a no-op while the guest memory service runs), the fill rule still not called on this core. |
+| 2026-11-10 | li#659 | gpu-core | port | 1 | `72e9429daf` | partial | e27508b, the fsp half only (`fs_i_storage.cpp`): the read throttle is skipped for Switch 2 titles. No switch. |
+| 2026-11-10 | li#436 | gpu-core | port | 1 | `32886f755c` | picked | 54b7df7. `src/tests/CMakeLists.txt` takes only `video_core/native_qmd.cpp`. |
+
+## Upstream sync, batch S3
+
+The DK Bananza draw path, same clone, in `v2`'s commit order.
+
+| Date | Unit | File | Verdict | Commits | Diff | Status | Notes |
+|---|---|---|---|---|---|---|---|
+| 2026-11-10 | dj:47b4169b3f | gpu-core | port | 1 | `47b4169b3f` | adapted | 3b1c264. `map_serial` starts at 1 and is bumped after `v2`'s locked `kind_map.Map` in `PageTableOp` and `BigPageTableOp`. |
+| 2026-11-10 | dj:292a68df46 | gpu-core | port | 1 | `292a68df46` | picked | e58b451. |
+| 2026-11-10 | dj:c8415d0e80 | gpu-core | port | 1 | `c8415d0e80` | adapted | e9d1e6c. `StorageBufferBinding` has no `native_pointer` here: the cache key uses `table_pointer`, and `v2`'s 8 MiB cap for table pointers stays. Adds `MemoryManager::MapSerial()`. |
+| 2026-11-10 | ps5 patch 0029 | eglantineps5-main | port | 1 | `548eba4` | adapted | 84aa7ab. `DescriptorTable` keeps `v2`'s lazy `invalidated` clear and one-page read; takes `bound_ids` and the power-of-two growth. |
+| 2026-11-10 | ps5 patch 0026 | eglantineps5-main | adapt | 1 | `ced139a` | adapted | 6aeecb2. Release tracking owns the acquires by default; QMD releases follow li#436 (inexact ones noted as pending or unknown). `EDEN_NX2_ACQ_LEDGER=1` runs `v2`'s ledger instead (tracking off), `=0` turns both off. `v2`'s `sent_releases`/`AwaitReleases` stay. |
+| 2026-11-10 | ps5 patch 0027 | eglantineps5-main | measure | 1 | `ced139a` | adapted | b45a5ad. Read-ahead runs only with 0026's tracking; `EDEN_NX2_DMA_READ_AHEAD=0` (or `EDEN_NX2_ACQ_LEDGER=0/1`) drains for every read as before. `EDEN_NX2_DMA_READ_TRUST=1` is opt-in. |
+| 2026-11-10 | ps5 patch 0028 | eglantineps5-main | measure | 1 | `548eba4` | picked | 3c3c424. Only the `gpu_split.h` member lists merged by hand. `EDEN_NX2_REG_BLOCKS=0` sends writes one by one. |
+| 2026-11-10 | ps5 patch 0018 | eglantineps5-main | adapt | 1 | `1ebcdf5` | partial | b966a80. Feedback copy coalescing (`EDEN_NX2_FEEDBACK_COPIES=exact` restores) and the `overlap_epoch` walk. `alias_maybe_newer` left out (`v2`'s `alias_modification_tick` does it); the vertex sync cache left out (`HasPendingCpuUpload` covers it). |
+| 2026-11-10 | ps5 patch 0061 | eglantineps5-main | measure | 1 | `573b76a` | adapted | 2d40a05. `v2`'s `overwritten_by_clear` skip stays, tested after the new one. Added switch `EDEN_NX2_JOIN_WHOLE_COPY=0`. |
+| 2026-11-10 | ps5 patch 0062 | eglantineps5-main | adapt | 1 | `573b76a` | adapted | f0630d9. `Nx2MayBeGpuWritten` reads `g_nx2_gpu_written_pages` (buffer cache writes only in `v2`); the second bitmap and `Nx2MarkBufferWritten` left out; the test list keeps its entries. ebed548 adds the switch `EDEN_NX2_STALE_SKIP=0`. |
+| 2026-11-10 | li#250 | gpu-core | port | 1 | `a195b27ffe..e67d389592` | adapted | a5202d6. The pipeline cache has no `InvalidateRegions` here: it is invalidated range by range behind the same page filter test. |
+| 2026-11-10 | li#611 | gpu-core | port | 1 | `23e91fa495..5b2df34e7b` | picked | b3b442c. |
+| 2026-11-10 | ps5 patch 0030 | eglantineps5-main | measure | 1 | `548eba4` | picked | c6ffe78. `EDEN_NX2_UNIFORM_PREFETCH=0` turns it off. |
+| 2026-11-10 | ps5 patch 0063 | eglantineps5-main | adapt | 1 | `9f783da` | adapted | 9107849 (Lichii #858, #921, #910), ported in the main thread after the batch. Beyond the six conflicts: the patch's second `map_serial` is dropped for the one dj:47b4169b3f added; `SamplingChangesImage` reads `alias_modification_tick`; views `ReplaceColorFeedbackViews` pointed at a copy are replaced again on a memo hit and block the delta capture; pipelines with `handle_program` descriptors take neither the memo nor delta draws; `ConfigureDelta` passes `desc.indirect_offset`; the `before_later_reads` command in `gpu_thread.cpp` ends the chain. 7a72b13 stubs the breaks in `tools/check-gpu-sync-stop.py`. `EDEN_NX2_FAST_DRAW=0` and `EDEN_NX2_TEXTURE_MEMO=0` turn them off, the `_VERIFY=1` ones count mismatches. |
