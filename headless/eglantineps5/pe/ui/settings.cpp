@@ -36,15 +36,16 @@ enum Category
     kSaveSync,
     kMultiplayer,
     kLanguage,
+    kTranslations,
     kCategoryCount,
 };
 constexpr const char *kCategories[kCategoryCount] = {
     TR("Profiles"), TR("Video"), TR("Performance"), TR("Audio"), TR("Controls"), TR("Accessibility"),
-    TR("Diagnostics"), TR("Game files"), TR("Downloads"), TR("NFS shares"), TR("Save sync"), TR("Multiplayer"), TR("Language")};
+    TR("Diagnostics"), TR("Game files"), TR("Downloads"), TR("NFS shares"), TR("Save sync"), TR("Multiplayer"), TR("Language"), TR("PT-BR translations")};
 // The same as headings: capitals differ by language, so each is its own text.
 constexpr const char *kHeadings[kCategoryCount] = {
     TR("PROFILES"), TR("VIDEO"), TR("PERFORMANCE"), TR("AUDIO"), TR("CONTROLS"), TR("ACCESSIBILITY"),
-    TR("DIAGNOSTICS"), TR("GAME FILES"), TR("DOWNLOADS"), TR("NFS SHARES"), TR("SAVE SYNC"), TR("MULTIPLAYER"), TR("LANGUAGE")};
+    TR("DIAGNOSTICS"), TR("GAME FILES"), TR("DOWNLOADS"), TR("NFS SHARES"), TR("SAVE SYNC"), TR("MULTIPLAYER"), TR("LANGUAGE"), TR("PT-BR TRANSLATIONS")};
 
 // The Video dialog's rows, and the window that shows five of them (placed as a game's settings
 // are).
@@ -175,6 +176,9 @@ void Launcher::press_settings(Key key)
         case kMultiplayer:
             open_multiplayer();
             break;
+        case kTranslations:
+            open_translations();
+            break;
         case kVideo:
             open_modal(Modal::video);
             video_rows_.visible = kVideoRowsShown;
@@ -244,6 +248,7 @@ void Launcher::draw_settings(Canvas &c)
         }(),
         services_.room_status().phase == Eden::Multiplayer::Phase::Connected ? tr("Connected") : tr("Off"),
         pick(services_.language_labels(), prefs_.language),
+        translations_.loading ? std::string{tr("Reading...")} : std::to_string(translations_.list.size()),
     };
     for (int row = 0; row < kCategoryCount; ++row)
     {
@@ -392,6 +397,11 @@ void Launcher::draw_settings(Canvas &c)
         lines = {{tr("PUBLIC ROOMS"), tr("Browse the public directory")},
                  {tr("PRIVATE ROOM"), tr("Room address and UDP port")}};
         break;
+    case kTranslations:
+        about = tr("Community PT-BR translations, installed directly on this console.");
+        lines = {{"CNX", fill(tr("{0} translations"), {std::to_string(translations_.list.size())})},
+                 {tr("GAME FILES"), short_path(folder, 34)}};
+        break;
     default:
         about = tr("The language games use when they offer it.");
         lines = {{tr("LANGUAGE"), pick(services_.language_labels(), prefs_.language)},
@@ -450,7 +460,9 @@ int Launcher::dialog_rows(Modal modal) const
         // builds that move saves.
         // A game a download source has can be deleted from the console (and downloaded again).
         return (services_.save_transfer_available() ? 9 : 8) +
-               (library_.selected < static_cast<int>(games_.size()) &&
+               (library_.selected >= 0 && library_.selected < static_cast<int>(games_.size()) &&
+                        translation_of(games_[static_cast<std::size_t>(library_.selected)].title_id) != nullptr ? 1 : 0) +
+               (library_.selected >= 0 && library_.selected < static_cast<int>(games_.size()) &&
                         !games_[static_cast<std::size_t>(library_.selected)].sources.empty() &&
                         !games_[static_cast<std::size_t>(library_.selected)].remote ? 1 : 0);
     case Modal::controls:     // vibration, the button mapping

@@ -2940,6 +2940,8 @@ endif()
                 "${EDEN_PORT_DIR}/multiplayer_directory.cpp"
                 "${launcher_dir}/frontend.cpp"
                 "${launcher_dir}/eden_services.cpp"
+                "${launcher_dir}/eden_cnx.cpp"
+                "${EDEN_PORT_DIR}/cnx.cpp"
                 "${launcher_dir}/pe/audio/mixer.cpp"
                 "${launcher_dir}/pe/audio/sounds.cpp"
                 "${launcher_dir}/pe/audio/wav.cpp"
@@ -2967,6 +2969,7 @@ endif()
                 "${launcher_dir}/pe/ui/launcher.cpp"
                 "${launcher_dir}/pe/ui/library.cpp"
                 "${launcher_dir}/pe/ui/settings.cpp"
+                "${launcher_dir}/pe/ui/translations.cpp"
                 "${launcher_dir}/pe/ui/textures.cpp"
                 "${launcher_dir}/pe/ui/widgets.cpp")
             target_sources(eden-headless PRIVATE ${launcher_sources})

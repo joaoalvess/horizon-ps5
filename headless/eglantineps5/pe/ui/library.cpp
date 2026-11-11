@@ -42,6 +42,7 @@ enum GameRow : int
     row_system,
     row_language,
     row_mods,
+    row_translation,
     row_save,   // in builds that move saves
     row_delete, // a game a download source has: deleted from the console
 };
@@ -241,6 +242,8 @@ void Launcher::read_mods(Game &game)
     mods_ = services_.mods(game.title_id);
     count_mods(game, mods_);
     mod_list_.clear();
+    if (translation_of(game.title_id) != nullptr)
+        mod_list_.push_back({-1, -1});
     for (int mod = 0; mod < static_cast<int>(mods_.size()); ++mod)
     {
         mod_list_.push_back({mod, -1});
@@ -684,9 +687,12 @@ void Launcher::draw_library(Canvas &c)
 
 int Launcher::game_row(int row) const
 {
-    if (row < row_save)
-        return row;
-    return services_.save_transfer_available() ? row : row + 1;
+    if (!games_.empty() && translation_of(games_[static_cast<std::size_t>(library_.selected)].title_id) == nullptr &&
+        row >= row_translation)
+        ++row;
+    if (!services_.save_transfer_available() && row >= row_save)
+        ++row;
+    return row;
 }
 
 void Launcher::press_game(Key key)
@@ -714,6 +720,10 @@ void Launcher::press_game(Key key)
         if (kind != row_save)
             return;
         break;
+    case Key::triangle:
+        if (kind == row_translation)
+            open_translations(game.title_id);
+        return;
     case Key::left:
     case Key::right:
     case Key::cross:
@@ -726,6 +736,13 @@ void Launcher::press_game(Key key)
         // A kind of setting has its own list.
         if (key == Key::cross)
             open_game_options(kind - row_video);
+        return;
+    }
+    if (kind == row_translation)
+    {
+        if (key == Key::cross)
+            if (const auto *entry = translation_of(game.title_id))
+                change_translation(*entry);
         return;
     }
     if (kind == row_mods)
@@ -856,13 +873,15 @@ void Launcher::draw_game(Canvas &c, float open)
                  {std::to_string(std::count_if(mods_.begin(), mods_.end(),
                                                [](const Mod &mod) { return mod.enabled; })),
                   std::to_string(mods_.size())}),
+        game != nullptr && translation_of(game->title_id) != nullptr ?
+            translation_of(game->title_id)->size + " · " + translation_action(*translation_of(game->title_id)) : "",
         import_source_ == SaveSource::ryujinx ? tr("Ryujinx save found") :
         import_source_ == SaveSource::folder ? tr("Save folder found") : tr("Nothing to import"),
         game != nullptr ? game->size : std::string{},
     };
     static constexpr const char *kLabels[] = {TR("Console mode"), TR("Video"),    TR("Performance"),
                                               TR("Audio"),        TR("Controls"), TR("System"),
-                                              TR("Language"),     TR("Mods"),     TR("Save data"),
+                                              TR("Language"),     TR("Mods"),     TR("PT-BR translation available (CNX)"), TR("Save data"),
                                               TR("Delete from console")};
     // Five rows show; the list scrolls to the others.
     list.push_clip({kDialogWindow.x - 24.0f, kDialogWindow.y - 6.0f, kDialogWindow.w + 48.0f,
@@ -885,6 +904,18 @@ void Launcher::draw_game(Canvas &c, float open)
         const float focus = row == option_ ? 1.0f : 0.0f;
         const int kind = game_row(row);
         list.push_opacity(game_rows_.row_alpha(row, kDialogRowHeight));
+        if (kind == row_translation && game != nullptr && translation_of(game->title_id) != nullptr)
+        {
+            const auto &entry = *translation_of(game->title_id);
+            text_fit(c, entry.installed ? tr("PT-BR translation installed (CNX)") :
+                                         tr("PT-BR translation available (CNX)"),
+                     628.0f, baseline(top + 14.0f, 38.0f, theme::kText24), theme::kText24,
+                     theme::kLimePale, 664.0f);
+            text_shrink(c, values[kind], 628.0f, baseline(top + 52.0f, 28.0f, theme::kSmall),
+                        theme::kSmall, theme::kMeta, 664.0f);
+            list.pop_opacity();
+            continue;
+        }
         // The value first: the row's name takes what it leaves. The kinds of setting, Mods and
         // Save data say what is there; the console mode is a choice; deleting says the game's size.
         const bool there = kind == row_mods ? !mods_.empty() && (game == nullptr || game->mods_enabled) :
@@ -911,6 +942,17 @@ void Launcher::draw_game(Canvas &c, float open)
         notice_block(c, message_, 592.0f, kDialogHints - 6.0f, theme::kSmall, 26.0f,
                      message_warning_ ? theme::kWarning : theme::kLimePale, 736.0f, 2,
                      message_warning_);
+    }
+    else if (game_row(option_) == row_translation && game != nullptr && translation_of(game->title_id) != nullptr)
+    {
+        const auto &entry = *translation_of(game->title_id);
+        notice(c, tr("Check the game version, updates/ and any extra steps."), 592.0f, 832.0f,
+               18.0f, theme::kWarning, 736.0f, true);
+        const Hint hints[] = {{Pad::cross, translation_action(entry)}, {Pad::triangle, tr("Translation details")},
+                              {Pad::circle, tr("Back")}};
+        draw_hints(c, !translations_.busy && !(entry.installed && !entry.managed) ? hints : hints + 1,
+                   !translations_.busy && !(entry.installed && !entry.managed) ? 3 : 2,
+                   592.0f, 872.0f, theme::kCopy, 736.0f);
     }
     else if (game_row(option_) == row_delete)
     {
@@ -973,13 +1015,24 @@ void Launcher::press_mods(Key key)
         cue(made ? Cue::saved : Cue::error);
         return;
     }
+    case Key::triangle:
+        if (translation_of(game.title_id) != nullptr)
+            open_translations(game.title_id);
+        return;
     case Key::cross:
     case Key::left:
     case Key::right:
     {
-        if (mods_.empty())
+        if (mod_list_.empty())
             return;
         const ModRow at = mod_list_[static_cast<std::size_t>(mod_rows_.selected)];
+        if (at.mod < 0)
+        {
+            if (key == Key::cross)
+                if (const auto *entry = translation_of(game.title_id))
+                    change_translation(*entry);
+            return;
+        }
         Mod &mod = mods_[static_cast<std::size_t>(at.mod)];
         // With the game's Mods switch off (the Library's), choosing a mod turns the switch on and
         // that mod with it: nobody switches a mod in a list that is switched off.
@@ -1035,7 +1088,7 @@ void Launcher::draw_mods(Canvas &c, float open)
     text_fit(c, game != nullptr ? game->name : std::string{}, 592.0f,
              baseline(291.0f, 32.0f, theme::kSmall), theme::kSmall, Color::rgb(0xcbb9be), 736.0f);
 
-    if (mods_.empty())
+    if (mod_list_.empty())
     {
         text_block(c,
                    fill(tr("No mods for this game yet. Copy each mod's folder to {0}, next to roms/."),
@@ -1065,9 +1118,24 @@ void Launcher::draw_mods(Canvas &c, float open)
         for (int row = mod_rows_.first_row(); row <= mod_rows_.last_row(); ++row)
         {
             const ModRow at = mod_list_[static_cast<std::size_t>(row)];
-            const Mod &mod = mods_[static_cast<std::size_t>(at.mod)];
             const float top = row_top(row);
             list.push_opacity(mod_rows_.row_alpha(row, kDialogRowHeight));
+            if (at.mod < 0)
+            {
+                const auto *entry = game == nullptr ? nullptr : translation_of(game->title_id);
+                if (entry != nullptr)
+                {
+                    text_fit(c, entry->installed ? tr("PT-BR translation installed (CNX)") :
+                                                   tr("PT-BR translation available (CNX)"),
+                             628.0f, baseline(top + 14.0f, 38.0f, theme::kText24), theme::kText24,
+                             theme::kLimePale, 664.0f);
+                    text_shrink(c, entry->size + " · " + translation_action(*entry), 628.0f,
+                                baseline(top + 52.0f, 28.0f, theme::kSmall), theme::kSmall, theme::kMeta, 664.0f);
+                }
+                list.pop_opacity();
+                continue;
+            }
+            const Mod &mod = mods_[static_cast<std::size_t>(at.mod)];
             if (at.cheat >= 0)
             {
                 // One of the mod's cheats, set in under it, with its own switch: faint while its
@@ -1110,6 +1178,18 @@ void Launcher::draw_mods(Canvas &c, float open)
         notice_block(c, message_, 592.0f, kDialogHints - 6.0f, theme::kSmall, 26.0f,
                      message_warning_ ? theme::kWarning : theme::kLimePale, 736.0f, 2,
                      message_warning_);
+    }
+    else if (game != nullptr && translation_of(game->title_id) != nullptr &&
+             !mod_list_.empty() && mod_list_[static_cast<std::size_t>(mod_rows_.selected)].mod < 0)
+    {
+        const auto &entry = *translation_of(game->title_id);
+        notice(c, tr("Check the game version, updates/ and any extra steps."), 592.0f, 832.0f,
+               18.0f, theme::kWarning, 736.0f, true);
+        const Hint hints[] = {{Pad::cross, translation_action(entry)}, {Pad::triangle, tr("Translation details")},
+                              {Pad::circle, tr("Back")}};
+        draw_hints(c, !translations_.busy && !(entry.installed && !entry.managed) ? hints : hints + 1,
+                   !translations_.busy && !(entry.installed && !entry.managed) ? 3 : 2,
+                   592.0f, 872.0f, theme::kCopy, 736.0f);
     }
     else if (mods_.empty())
     {

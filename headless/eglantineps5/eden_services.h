@@ -5,6 +5,7 @@
 
 #include "pe/ui/services.hpp"
 #include "remote/remote.h"
+#include "cnx.h"
 
 #include <atomic>
 #include <chrono>
@@ -79,6 +80,10 @@ public:
     std::string mods_folder(std::uint64_t title_id) override;
     bool make_mods_folder(std::uint64_t title_id) override;
 
+    pe::ui::Translations translations() override;
+    bool install_translation(std::uint64_t title_id) override;
+    bool remove_translation(std::uint64_t title_id) override;
+
     pe::ui::Sources sources() override;
     void refresh_sources() override;
     bool download(const pe::ui::Game& game, int source, bool first) override;
@@ -119,6 +124,15 @@ public:
                       std::atomic<unsigned>&) override;
     bool can_launch_game() override;
 private:
+    bool StartTranslation(std::uint64_t title_id, bool remove);
+    void StopTranslations();
+    std::thread cnx_thread_;
+    std::mutex cnx_lock_;
+    std::atomic<bool> cnx_stop_{false};
+    pe::ui::Translations cnx_;
+    std::vector<Eden::CNX::Entry> cnx_entries_;
+    std::int64_t cnx_checked_ = 0;
+    std::uint64_t cnx_enable_title_ = 0;
     Eden::Multiplayer::RoomClient& rooms_;
     int user_ = -1; // the PS5 user in front when the menu opened (negative: unknown)
     std::string launch_error_;

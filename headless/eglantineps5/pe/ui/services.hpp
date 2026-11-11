@@ -91,6 +91,21 @@ struct Game
     bool remote = false;
 };
 
+struct Translation
+{
+    std::string name, size, error;
+    std::uint64_t title_id = 0;
+    bool installed = false, managed = false;
+};
+
+struct Translations
+{
+    std::vector<Translation> list;
+    bool loading = false, busy = false, cached = false;
+    std::uint64_t generation = 0, active_title = 0;
+    std::string error;
+};
+
 // A download source: a place on the network with Switch games (headless/remote/remote.h).
 struct SourceInfo
 {
@@ -509,6 +524,18 @@ class Services
     }
 
     // ---- mods: patches, replacement files and cheats the player added for a game ----
+    virtual Translations translations()
+    {
+        return {};
+    }
+    virtual bool install_translation(std::uint64_t)
+    {
+        return false;
+    }
+    virtual bool remove_translation(std::uint64_t)
+    {
+        return false;
+    }
     virtual std::vector<Mod> mods(std::uint64_t)
     {
         return {};

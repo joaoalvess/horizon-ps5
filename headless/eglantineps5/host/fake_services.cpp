@@ -332,6 +332,9 @@ bool FakeServices::folders(const std::string &directory, std::vector<std::string
 
 std::vector<ui::Mod> FakeServices::mods(std::uint64_t title_id)
 {
+    for (const auto &entry : cnx.list)
+        if (entry.title_id == title_id && entry.installed)
+            return {{entry.managed ? "PT-BR CNX" : "ptbr", tr("Files"), true, {}}};
     if (!has_mods || std::find(modded_.begin(), modded_.end(), title_id) == modded_.end())
         return {};
     std::vector<ui::Mod> mods = {

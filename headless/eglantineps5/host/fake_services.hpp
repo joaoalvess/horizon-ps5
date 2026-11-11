@@ -306,6 +306,30 @@ class FakeServices final : public ui::Services
     // Sample mods, for two of the games: three, the second switched off, the third with cheats
     // chosen one by one (its two frame rates replace each other); none when has_mods is cleared.
     bool has_mods = true;
+    ui::Translations cnx;
+    ui::Translations translations() override { return cnx; }
+    bool install_translation(std::uint64_t title_id) override
+    {
+        for (auto &entry : cnx.list)
+            if (entry.title_id == title_id && entry.error.empty() && !entry.installed)
+            {
+                entry.installed = entry.managed = true;
+                ++cnx.generation;
+                return true;
+            }
+        return false;
+    }
+    bool remove_translation(std::uint64_t title_id) override
+    {
+        for (auto &entry : cnx.list)
+            if (entry.title_id == title_id && entry.managed)
+            {
+                entry.installed = entry.managed = false;
+                ++cnx.generation;
+                return true;
+            }
+        return false;
+    }
     std::vector<ui::Mod> mods(std::uint64_t) override;
     bool set_mod_enabled(std::uint64_t, const std::string &name, bool enabled) override;
     bool set_cheat_enabled(std::uint64_t, const std::string &mod, const std::string &cheat,

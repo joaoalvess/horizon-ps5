@@ -139,6 +139,124 @@ struct Stage
     }
 };
 
+void cnx_pictures(Stage &s)
+{
+    const auto local = s.services.games().front();
+    s.services.cnx.list = {
+        {local.name, "53.7 MB", "", local.title_id, false, false},
+        {"A Manual Translation", "622 KB", "", 0x0100C00000001000ULL, true, false},
+        {"B Inconsistent Metadata", "464 MB", "Os Title IDs dos metadados CNX são inconsistentes.",
+         0x0100C00000002000ULL, false, false},
+    };
+    for (int i = 3; i < 128; ++i)
+        s.services.cnx.list.push_back({"Community game " + std::to_string(i), "12.5 MB", "",
+                                       0x0100D00000000000ULL + static_cast<std::uint64_t>(i) * 0x1000, false, false});
+    s.services.cnx.generation = 1;
+    s.services.cnx.cached = true;
+    s.restart();
+    s.wait(1.0f);
+    s.press({Key::up, Key::right, Key::cross, Key::up});
+    s.wait(0.8f);
+    s.shoot("cnx-settings");
+    s.press({Key::cross});
+    s.wait(0.8f);
+    s.shoot("cnx-available");
+    s.press({Key::cross});
+    s.wait(0.8f);
+    s.shoot("cnx-installed");
+    if (!s.services.cnx.list.front().managed)
+    {
+        std::fprintf(stderr, "CNX preview failed: install action did not reach the service\n");
+        s.ok = false;
+    }
+    s.press({Key::cross});
+    s.wait(0.8f);
+    if (s.services.cnx.list.front().managed)
+    {
+        std::fprintf(stderr, "CNX preview failed: remove action did not reach the service\n");
+        s.ok = false;
+    }
+    s.press({Key::down, Key::cross});
+    s.wait(0.8f);
+    s.shoot("cnx-manual");
+    if (!s.services.cnx.list[1].installed || s.services.cnx.list[1].managed)
+    {
+        std::fprintf(stderr, "CNX preview failed: manual installation was changed\n");
+        s.ok = false;
+    }
+    s.press({Key::down, Key::cross});
+    s.wait(0.8f);
+    s.shoot("cnx-invalid");
+    if (s.services.cnx.list[2].installed)
+    {
+        std::fprintf(stderr, "CNX preview failed: inconsistent metadata allowed installation\n");
+        s.ok = false;
+    }
+    s.services.cnx.loading = true;
+    s.wait(0.8f);
+    s.shoot("cnx-refreshing");
+    s.services.cnx.loading = false;
+    s.services.cnx.busy = true;
+    s.services.cnx.active_title = local.title_id;
+    s.press({Key::up, Key::up});
+    s.wait(0.8f);
+    s.shoot("cnx-working");
+    s.services.cnx.busy = false;
+    s.restart();
+    s.wait(1.0f);
+    s.press({Key::up, Key::cross, Key::triangle});
+    for (int i = 0; i < 8; ++i)
+        s.press({Key::down});
+    s.wait(0.8f);
+    s.shoot("cnx-game");
+    s.press({Key::cross});
+    s.wait(0.8f);
+    if (!s.services.cnx.list.front().managed)
+    {
+        std::fprintf(stderr, "CNX preview failed: game action did not install the translation\n");
+        s.ok = false;
+    }
+    s.press({Key::cross});
+    s.wait(0.8f);
+    s.press({Key::up, Key::cross});
+    s.wait(0.8f);
+    s.shoot("cnx-mods");
+    s.press({Key::cross});
+    s.wait(0.8f);
+    s.shoot("cnx-mods-installed");
+    if (!s.services.cnx.list.front().managed)
+    {
+        std::fprintf(stderr, "CNX preview failed: Mods action did not install the translation\n");
+        s.ok = false;
+    }
+    s.press({Key::triangle});
+    s.wait(0.8f);
+    s.shoot("cnx-from-mods");
+    s.press({Key::circle});
+    s.wait(0.8f);
+    s.shoot("cnx-back-to-mods");
+    s.services.cnx.busy = true;
+    s.restart();
+    s.wait(1.0f);
+    s.press({Key::cross});
+    if (!s.launcher->selected_game().empty())
+    {
+        std::fprintf(stderr, "CNX preview failed: a game launched during installation\n");
+        s.ok = false;
+    }
+    s.shoot("cnx-launch-waits");
+    s.services.cnx.busy = false;
+    s.services.cnx.list.clear();
+    s.services.cnx.cached = false;
+    s.services.cnx.error = "Não foi possível baixar os dados do CNX.";
+    ++s.services.cnx.generation;
+    s.restart();
+    s.wait(1.0f);
+    s.press({Key::up, Key::right, Key::cross, Key::up, Key::cross});
+    s.wait(0.8f);
+    s.shoot("cnx-offline-empty");
+}
+
 void pictures(Stage &s)
 {
     // Home, as it settles after the app opens.
@@ -1189,7 +1307,9 @@ int main(int argc, char **argv)
     stage.pixels.resize(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4);
     stbi_flip_vertically_on_write(1);
     const char *which_tour = std::getenv("PE_TOUR");
-    if (make_tour && which_tour && std::strcmp(which_tour, "update") == 0)
+    if (std::getenv("PE_CNX") != nullptr)
+        cnx_pictures(stage);
+    else if (make_tour && which_tour && std::strcmp(which_tour, "update") == 0)
         update_tour(stage);
     else if (make_tour)
         tour(stage);

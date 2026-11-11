@@ -1219,6 +1219,8 @@ int main(int argc, char** argv) {
                     soft_hmma_by_port = false;
                 }
             }
+            if (const std::string mods = Eden::AssetsPath("mods"); Eden::DirectoryExists(mods))
+                Common::FS::SetEdenPath(Common::FS::EdenPath::LoadDir, mods);
             const auto all_mods = Eden::Mods::List(Eden::AssetsPath("mods"), title);
             auto mods_off = Eden::LoadDisabledMods(title);
             if (!Eden::LoadModsEnabled(title)) {
