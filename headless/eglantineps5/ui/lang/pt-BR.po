@@ -2353,3 +2353,84 @@ msgstr "{0}/ (NSP ou XCI)"
 #: pe/ui/browse.cpp
 msgid "{0}/ (one folder per game ID)"
 msgstr "{0}/ (uma pasta por ID de título)"
+
+msgid "PT-BR translations"
+msgstr "Traduções PT-BR"
+
+msgid "PT-BR TRANSLATIONS"
+msgstr "TRADUÇÕES PT-BR"
+
+msgid "Community translations from the CNX list"
+msgstr "Traduções da comunidade disponíveis na lista do CNX"
+
+msgid "Community PT-BR translations, installed directly on this console."
+msgstr "Traduções PT-BR da comunidade, instaladas direto neste console."
+
+msgid "{0} translations"
+msgstr "{0} traduções"
+
+msgid "PT-BR translation available (CNX)"
+msgstr "Tradução PT-BR disponível (CNX)"
+
+msgid "PT-BR translation installed (CNX)"
+msgstr "Tradução PT-BR instalada (CNX)"
+
+msgid "Install"
+msgstr "Instalar"
+
+msgid "Installed"
+msgstr "Instalada"
+
+msgid "Not installed"
+msgstr "Não instalada"
+
+msgid "Installed manually"
+msgstr "Instalada manualmente"
+
+msgid "Working..."
+msgstr "Aguarde..."
+
+msgid "Translation details"
+msgstr "Detalhes da tradução"
+
+msgid "In your library"
+msgstr "Na sua biblioteca"
+
+msgid "Invalid metadata"
+msgstr "Dados inconsistentes"
+
+msgid "Reading the CNX list..."
+msgstr "Lendo a lista do CNX..."
+
+msgid "The translation list is unavailable."
+msgstr "A lista de traduções está indisponível."
+
+msgid "Updating the list..."
+msgstr "Atualizando a lista..."
+
+msgid "Saved list. Updated once a day."
+msgstr "Lista salva. Atualização uma vez ao dia."
+
+msgid "List updated."
+msgstr "Lista atualizada."
+
+msgid "Browse translations"
+msgstr "Navegar traduções"
+
+msgid "Installed outside the app. This folder is kept; only PT-BR CNX can be removed here."
+msgstr "Instalada fora do app. Essa pasta será preservada; aqui só é possível remover PT-BR CNX."
+
+msgid "Some translations require a specific game version or extra steps. Check the release instructions and the update in updates/."
+msgstr "Algumas traduções exigem uma versão específica do jogo ou passos extras. Confira as instruções da tradução e a atualização em updates/."
+
+msgid "Could not start the translation operation. Please try again."
+msgstr "Não foi possível iniciar a instalação ou remoção. Tente novamente."
+
+msgid "Translation updated. Applies on next launch."
+msgstr "Tradução atualizada. Será aplicada ao iniciar o jogo."
+
+msgid "Wait for the translation installation or removal to finish."
+msgstr "Aguarde a instalação ou remoção da tradução terminar."
+
+msgid "Check the game version, updates/ and any extra steps."
+msgstr "Confira a versão do jogo, updates/ e os passos extras."

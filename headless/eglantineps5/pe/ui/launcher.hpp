@@ -68,6 +68,7 @@ class Launcher
         files,
         language,
         about,
+        translations,
     };
     enum class Modal : std::uint8_t
     {
@@ -176,6 +177,14 @@ class Launcher
     int game_row(int row) const;
     void press_mods(Key key);
     void draw_mods(Canvas &c, float open);
+    void poll_translations(float dt);
+    void open_translations(std::uint64_t title_id = 0);
+    void press_translations(Key key);
+    void draw_translations(Canvas &c);
+    const Translation *translation_of(std::uint64_t title_id) const;
+    const char *translation_action(const Translation &entry) const;
+    void change_translation(const Translation &entry);
+    bool translation_in_library(const Translation &entry) const;
 
     // ---- a game's own settings by category, and the button mapping (game_options.cpp) ----
     // Categories, in the order of the game settings' rows: video, performance, audio, controls,
@@ -423,6 +432,11 @@ class Launcher
     };
     std::vector<ModRow> mod_list_;
     ListView mod_rows_;
+    Translations translations_;
+    ListView translation_rows_;
+    Screen translations_return_ = Screen::settings;
+    Modal translations_modal_ = Modal::none;
+    float translations_wait_ = 0.0f;
     int game_options_ = 0;          // the category a game's own settings dialog shows
     ListView option_rows_;          // its rows
     std::atomic<bool> prepare_stop_{false};

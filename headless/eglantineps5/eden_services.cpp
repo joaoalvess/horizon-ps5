@@ -783,6 +783,7 @@ EdenServices::EdenServices(std::string launch_error, Eden::Multiplayer::RoomClie
 }
 
 EdenServices::~EdenServices() {
+    StopTranslations();
     if (Eden::FilesystemAccess()) Eden::Remote::Stop();
     {
         const std::lock_guard lock(sync_lock_);
