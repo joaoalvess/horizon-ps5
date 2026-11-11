@@ -2744,6 +2744,15 @@ else()
     target_include_directories(eden-mods-check PRIVATE "${PROJECT_SOURCE_DIR}/src")
     target_link_libraries(eden-mods-check PRIVATE core)
     target_compile_options(eden-mods-check PRIVATE -fno-rtti)
+    add_library(eden-cnx-miniz STATIC
+        "${PORT_ROOT}/third_party/miniz/miniz.c"
+        "${PORT_ROOT}/third_party/miniz/miniz_tdef.c"
+        "${PORT_ROOT}/third_party/miniz/miniz_tinfl.c"
+        "${PORT_ROOT}/third_party/miniz/miniz_zip.c")
+    target_include_directories(eden-cnx-miniz PUBLIC "${PORT_ROOT}/third_party/miniz")
+    target_compile_options(eden-cnx-miniz PRIVATE -w)
+    add_executable(eden-cnx-check "${EDEN_PORT_DIR}/cnx_check.cpp" "${EDEN_PORT_DIR}/cnx.cpp")
+    target_link_libraries(eden-cnx-check PRIVATE nlohmann_json::nlohmann_json eden-cnx-miniz)
     # The settings store's check is written with assert(): they stay in a release build.
     add_executable(eden-settings-check "${EDEN_PORT_DIR}/preferences_check.cpp")
     target_link_libraries(eden-settings-check PRIVATE core)
